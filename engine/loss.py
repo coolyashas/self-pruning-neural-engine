@@ -17,8 +17,15 @@ def softmax_cross_entropy(logits: Tensor, labels: np.ndarray) -> Tensor:
     """logits: (N, C) scores. labels: (N,) int class indices, not a Tensor
     — they're not differentiable w.r.t. anything. Returns mean loss over N.
     """
-    n = logits.shape[0]
+    n, n_classes = logits.shape
     labels = np.asarray(labels)
+    # fancy-indexing with an out-of-[0, C) label doesn't always raise: a
+    # label of -1 is valid NumPy negative indexing and silently selects
+    # the LAST class instead of erroring -- a wrong loss/gradient, not a
+    # crash. Catch it here rather than downstream.
+    assert np.all((labels >= 0) & (labels < n_classes)), (
+        f"labels must be in [0, {n_classes}), got min={labels.min()}, max={labels.max()}"
+    )
 
     # subtract the row max before exp(): shifts every row by a constant,
     # which softmax is invariant to, but keeps exp() from overflowing.

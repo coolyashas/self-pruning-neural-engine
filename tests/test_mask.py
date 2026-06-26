@@ -1,12 +1,31 @@
 import numpy as np
+import pytest
 
 from engine.tensor import Tensor
 from nn.linear import Linear
-from prune.mask import set_mask
+from prune.mask import _top_k_keep_mask, keep_mask_from_scores, set_mask
 from tests.gradcheck_utils import assert_grad_matches
 from utils.seed import set_seed
 
 set_seed(0)
+
+
+def test_top_k_keep_mask_rejects_nan_scores():
+    """NumPy's argsort sorts NaN to the END (treats it as the LARGEST
+    value), so a NaN score would be silently KEPT by top-k regardless of
+    its true importance -- a wrong mask, not a crash. Every pruning/
+    revival decision in this module funnels through _top_k_keep_mask, so
+    guarding it once here protects all of them.
+    """
+    scores = np.array([1.0, np.nan, 3.0, 2.0])
+    with pytest.raises(AssertionError):
+        _top_k_keep_mask(scores, n_keep=2)
+
+
+def test_keep_mask_from_scores_surfaces_the_nan_guard_through_the_public_api():
+    scores = np.array([[1.0, np.nan], [3.0, 2.0]])
+    with pytest.raises(AssertionError):
+        keep_mask_from_scores(scores, sparsity=0.5)
 
 
 def test_default_mask_is_all_ones_and_excluded_from_parameters():

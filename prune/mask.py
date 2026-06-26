@@ -32,7 +32,19 @@ def _top_k_keep_mask(scores: np.ndarray, n_keep: int) -> np.ndarray:
     highest-scoring entries. Top-k via argsort, not a percentile/threshold
     cutoff: a threshold can over- or undershoot the target count when
     scores tie, top-k can't.
+
+    Every caller in this module (prune_to_sparsity, prune_neurons_to_count,
+    revive_to_count, and prune.dst's run_exchange_cycle) funnels through
+    here, so this is the one place to guard against NaN scores reaching
+    argsort: NumPy sorts NaN to the END (treats it as the LARGEST value),
+    so a NaN-scored entry would be silently KEPT by every pruning/revival
+    decision regardless of its true importance -- a wrong mask, not a
+    crash. NaN scores would only arise from an already-corrupted
+    upstream computation (e.g. a diverged loss during a scoring sweep),
+    but failing loudly here is cheap insurance against a much harder to
+    diagnose silent failure several layers downstream.
     """
+    assert not np.isnan(scores).any(), "NaN score would be silently treated as highest-ranked by argsort"
     flat_keep = np.zeros(scores.size, dtype=bool)
     if n_keep > 0:
         top_indices = np.argsort(scores.ravel())[scores.size - n_keep :]

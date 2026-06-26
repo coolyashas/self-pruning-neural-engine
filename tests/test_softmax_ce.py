@@ -45,6 +45,26 @@ def test_softmax_ce_large_logits_stay_finite():
     assert np.all(np.isfinite(t.grad))
 
 
+def test_negative_label_is_rejected_not_silently_misindexed():
+    """A label of -1 is valid NumPy negative indexing, not an
+    out-of-bounds error -- without a range check, fancy-indexing
+    log_probs[arange(n), labels] would silently select the LAST class
+    for that row instead of raising, producing a wrong loss/gradient
+    rather than a crash.
+    """
+    logits = Tensor(np.random.randn(3, 4), requires_grad=True)
+    labels = np.array([0, -1, 2])
+    with pytest.raises(AssertionError):
+        softmax_cross_entropy(logits, labels)
+
+
+def test_out_of_range_label_is_rejected():
+    logits = Tensor(np.random.randn(3, 4), requires_grad=True)
+    labels = np.array([0, 4, 2])  # 4 is out of range for 4 classes (valid: 0-3)
+    with pytest.raises(AssertionError):
+        softmax_cross_entropy(logits, labels)
+
+
 def test_full_pipeline_matmul_bias_broadcast_softmax_ce():
     """Linear-style affine (X@W + b, b broadcast over the batch) feeding
     into the fused loss, checked end to end through one backward() call.
