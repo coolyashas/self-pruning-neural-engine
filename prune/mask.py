@@ -129,3 +129,38 @@ def prune_neurons_to_count(layer: Linear, scores: np.ndarray, target_active: int
     new_mask[:, ~keep_neurons] = 0.0
     set_mask(layer, new_mask)
     layer.bias.data[~keep_neurons] = 0.0
+
+
+def revive_to_count(layer: Linear, scores: np.ndarray, n_revive: int) -> np.ndarray:
+    """Activate exactly the n_revive highest-scoring CURRENTLY-MASKED
+    entries in layer -- the grow half of dynamic sparse training.
+    Mirrors prune_to_sparsity's -inf trick, inverted: already-ACTIVE
+    entries are forced to -inf so top-k can only ever select among
+    masked-off ones, guaranteeing this never re-selects something that's
+    already active (the grow-side analogue of prune_to_sparsity's
+    never-revives guarantee).
+
+    Returns the boolean index array (same shape as layer.mask) of
+    entries that were just revived -- callers need this to (a) call
+    optimizer.reset_state on exactly these indices, since a revived
+    entry must not inherit stale pre-pruning momentum, and (b) exclude
+    them from the same DST cycle's subsequent drop step. Does NOT touch
+    the optimizer itself -- mask mechanics here, optimizer-state
+    mechanics in optim/adam.py, same division of responsibility
+    prune_to_sparsity already has.
+
+    Clamps n_revive to however many masked-off entries actually exist,
+    same spirit as prune_to_sparsity clamping to n_active.
+    """
+    current_mask = layer.mask.data
+    n_inactive = int((current_mask == 0).sum())
+    n_revive = min(n_revive, n_inactive)
+    if n_revive == 0:
+        return np.zeros_like(current_mask, dtype=bool)
+
+    adjusted_scores = np.where(current_mask != 0, -np.inf, scores)
+    revived = _top_k_keep_mask(adjusted_scores, n_revive)  # top n_revive among masked-off entries
+
+    new_mask = current_mask.astype(bool) | revived
+    set_mask(layer, new_mask)
+    return revived
