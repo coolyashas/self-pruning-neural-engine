@@ -37,6 +37,35 @@ class Tensor:
             self.grad = np.zeros_like(self.data)
         self.grad += grad
 
+    def backward(self, grad: np.ndarray | None = None) -> None:
+        """Run reverse-mode autodiff back through the graph from this node.
+
+        No-arg form requires a scalar (e.g. a loss) and seeds grad=1.
+        Builds a topo order by DFS (parents before the node they produced),
+        then walks it in reverse so every node's _backward() only fires
+        once all of its consumers have already accumulated into its grad.
+        """
+        if grad is None:
+            assert self.data.size == 1, "backward() with no grad arg needs a scalar output"
+            grad = np.ones_like(self.data)
+        self.accumulate_grad(np.asarray(grad, dtype=np.float64))
+
+        topo: list["Tensor"] = []
+        visited: set["Tensor"] = set()
+
+        def build(node: "Tensor") -> None:
+            if node not in visited:
+                visited.add(node)
+                for parent in node._prev:
+                    build(parent)
+                topo.append(node)
+
+        build(self)
+
+        for node in reversed(topo):
+            if node.grad is not None:  # skip branches that never needed grad
+                node._backward()
+
     @property
     def shape(self) -> tuple[int, ...]:
         return self.data.shape
