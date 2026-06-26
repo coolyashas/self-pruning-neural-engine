@@ -52,6 +52,21 @@ def run_exchange_cycle(
     masked_parameters(), so layer.weight is actually in its parameter
     list (reset_state looks it up via .index()).
 
+    Also resets bias state for any neuron whose bias_mask flips 0->1 as
+    a SIDE EFFECT of this revival. set_mask (called inside
+    revive_to_count) resyncs bias_mask from mask.any(axis=0) on every
+    call -- so reviving even one weight into a column that had been
+    driven fully to zero (whether by plain unstructured drift or by an
+    earlier structured prune) silently un-freezes that neuron's bias,
+    letting Adam resume updating it. If that bias's m/v were never
+    reset, the very next step() applies real momentum/variance computed
+    from before the neuron died -- exactly the stale-momentum failure
+    mode the whole mask-aware-Adam design exists to prevent, just for
+    bias instead of weight. revive_to_count only resets the WEIGHT side
+    (it has no bias-side knowledge by design), so this function -- the
+    one place that already watches mask transitions during revival --
+    is where the bias-side reset belongs.
+
     Guarded no-op at n_active_before == 0: the drop step's "keep N
     highest" target IS n_active_before, so at 0 it would keep nothing
     regardless of score -- even a +inf-forced "must survive" entry gets
@@ -67,9 +82,13 @@ def run_exchange_cycle(
     if n_active_before == 0:
         return
 
+    bias_active_before = layer.bias_mask.data.astype(bool).copy()
     revived = revive_to_count(layer, grow_scores, n_exchange)
     if revived.any():
         optimizer.reset_state(layer.weight, revived)
+        bias_newly_active = layer.bias_mask.data.astype(bool) & ~bias_active_before
+        if bias_newly_active.any():
+            optimizer.reset_state(layer.bias, bias_newly_active)
 
     inactive_remaining = layer.mask.data == 0  # still off after revive
     adjusted_drop_scores = np.where(

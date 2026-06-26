@@ -120,6 +120,46 @@ def test_revived_entry_gets_exactly_zero_fresh_moments_in_integrated_path():
     assert opt.v[0][1, 1] == 0.0
 
 
+def test_revive_un_freezing_a_dead_neurons_bias_resets_its_stale_moments():
+    """The interaction the per-feature tests don't cover: structured
+    pruning correctly freezes a dead neuron's bias (its own bias_mask
+    test), and run_exchange_cycle correctly resets a revived WEIGHT's
+    moments (the test above) -- but nothing previously reset the BIAS's
+    moments when a revival incidentally un-freezes it. set_mask resyncs
+    bias_mask = mask.any(axis=0) on every call, so reviving a single
+    weight into a fully-dead column flips that neuron's bias_mask back
+    to active; without a reset, its next update would use real,
+    pre-death momentum -- exactly the stale-state bug mask-aware Adam
+    exists to prevent, just rediscovered on the bias side.
+    """
+    from prune.criteria import neuron_magnitude_scores
+    from prune.mask import prune_neurons_to_count
+
+    layer = Linear(3, 3)
+    pairs = layer.masked_parameters()
+    opt = Adam([p for p, _ in pairs], lr=0.1, masks=[m for _, m in pairs])
+
+    for _ in range(15):  # build up real, nonzero momentum everywhere, including bias
+        opt.zero_grad()
+        layer(Tensor(np.random.randn(5, 3))).sum().backward()
+        opt.step()
+    stale_bias_m = opt.m[1][1]
+    stale_bias_v = opt.v[1][1]
+    assert stale_bias_m != 0.0 and stale_bias_v != 0.0
+
+    prune_neurons_to_count(layer, neuron_magnitude_scores(layer), target_active=2)  # kills neuron 1
+    assert layer.bias_mask.data[1] == 0.0
+    assert opt.m[1][1] == stale_bias_m  # frozen, untouched by the freeze itself -- expected
+
+    grow_scores = np.zeros((3, 3))
+    grow_scores[0, 1] = 100.0  # force-revive the first weight feeding into dead neuron 1
+    run_exchange_cycle(layer, np.abs(np.random.randn(3, 3)), grow_scores, n_exchange=1, optimizer=opt)
+
+    assert layer.bias_mask.data[1] == 1.0  # neuron 1 un-frozen as a side effect of the revival
+    assert opt.m[1][1] == 0.0  # must be a clean reset, not the stale pre-death value
+    assert opt.v[1][1] == 0.0
+
+
 def test_repeated_prune_revive_prune_same_connection_does_not_corrupt_state():
     """The concrete answer to 'reason about the stability implications of
     regrowth': cycle one specific connection through prune -> revive ->
