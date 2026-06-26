@@ -6,9 +6,12 @@ MLP, an Adam optimizer, and a training loop that prunes its own weights toward a
 target sparsity on a 2D spirals dataset — then compares pruning criteria on a
 sparsity↔accuracy Pareto curve.
 
-No PyTorch / TensorFlow / JAX. The autodiff, backward pass, optimizer, pruning,
-and training loop are all implemented by hand. NumPy for numerics, Matplotlib
-for plots, scikit-learn only ever for loading data (never for models or grads).
+No PyTorch / TensorFlow / JAX, and no scikit-learn either — every line of
+autodiff, backward pass, optimizer, pruning, training loop, *and* the spirals
+dataset itself (`train/dataset.py::make_spirals`, generated from scratch with
+plain NumPy, not loaded from any library) is implemented by hand in this repo.
+NumPy for numerics, Matplotlib for plots; that's the entire dependency surface
+(see `pyproject.toml`).
 
 ## Install (uv)
 
@@ -77,9 +80,32 @@ pip install -e ".[dev]"
   this sweep's actual output supports, and how to falsify it by re-running
   the command above.
 
+- **Part 4 — structured (neuron-level) self-pruning** (closes the "real
+  cost measurement" gap: compresses to a genuinely smaller dense model,
+  not just a masked one — see `DESIGN.md` §5 for the measured speedup):
+  ```bash
+  python -m train.run_part4_structured
+  ```
+  Structured-vs-unstructured accuracy comparison at matched sparsity
+  (writes `results/structured_vs_unstructured.{csv,png}`):
+  ```bash
+  python -m train.run_structured_vs_unstructured
+  ```
+
+- **Dynamic sparse training (regrowth) comparison** (with-vs-without
+  regrowth at matched final sparsity, 5 seeds; writes
+  `results/dst_comparison.{csv,png}` — see `DESIGN.md` §6 for the
+  measured result, which goes against the literature's usual finding on
+  this small task):
+  ```bash
+  python -m train.run_dst_comparison
+  ```
+
 See [`DESIGN.md`](DESIGN.md) for the criterion derivation, the
-masked-gradient/mask-aware-Adam design rationale, the honest cost/
-bottleneck story, and serving implications.
+masked-gradient/mask-aware-Adam design rationale, weight-init
+justification, the honest cost/bottleneck story, the structured-pruning
+speedup (measured, with a caveat about how the first measurement of it
+overstated it), and the dynamic-sparse-training result.
 
 ## Reproducibility
 

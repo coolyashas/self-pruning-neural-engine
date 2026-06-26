@@ -1,9 +1,12 @@
 # DESIGN.md
 
-Four things worth defending in detail: where the saliency criterion comes
+Six things worth defending in detail: where the saliency criterion comes
 from, why the masked-gradient/mask-aware-Adam design is built the way it
-is, what pruning here actually costs (and doesn't save), and what would
-need to change to ship it.
+is, why this network is initialized the way it is, what unstructured
+pruning here actually costs (and doesn't save), how structured
+(neuron-level) pruning closes that gap with a real measured speedup, and
+what dynamic sparse training (regrowth) actually buys — measured, not
+assumed.
 
 ## 1. Importance criterion: why `|w·g|`, not just `|w|`
 
@@ -36,7 +39,7 @@ Two practical consequences that show up directly in the code:
   connection can rank highest on magnitude and lowest on saliency
   simultaneously (`test_saliency_and_magnitude_can_disagree`), and the
   real Pareto sweep shows this divergence matters in practice, not just
-  in a contrived test (see §3 below and `results/CLAIM.md`).
+  in a contrived test (see `results/CLAIM.md`).
 
 ## 2. Masked gradient and mask-aware Adam
 
@@ -117,7 +120,27 @@ step, not a muted one. `tests/test_masked_adam.py::test_revival_first_update_is_
 pins the measured ratio so this claim can't silently drift from the code
 again.
 
-## 3. The bottleneck: pruning here saves parameters, not time
+## 3. Weight initialization: why He, not Xavier
+
+`nn/linear.py` initializes each `Linear`'s weight with
+`std = sqrt(2 / in_features)`. The factor of 2 (vs. Xavier/Glorot's
+`sqrt(1 / in_features)`) is specifically because this network uses ReLU,
+not because it's a generically "better" default. ReLU zeros out roughly
+half its inputs (everything below 0), which roughly halves the variance
+of the activations it produces relative to its pre-activation input. He
+initialization's extra factor of 2 is chosen to exactly cancel that
+halving, so that activation variance stays roughly constant layer to
+layer instead of shrinking geometrically with depth (which would push
+deeper layers' activations toward 0 and starve their gradients). Xavier's
+derivation assumes a roughly linear or symmetric activation (e.g. tanh
+near 0) where no such halving happens — using it under ReLU would
+under-scale the weights and is a known, common mismatch. With only two
+hidden layers here the effect is mild, but the reasoning is the same
+regardless of depth, and it's the kind of detail worth being able to
+justify on demand rather than copying a "standard" initializer without
+checking it matches the activation actually in use.
+
+## 4. The bottleneck: unstructured pruning here saves parameters, not time
 
 `evaluation/cost.py` deliberately reports two different numbers:
 `active_param_count` (what a sparse implementation would need to store)
@@ -151,7 +174,7 @@ The contribution of this repo is the *correctness* infrastructure
 (mask-as-graph-node, mask-aware Adam, exact-budget scheduling) and honest
 accounting of what pruning has and hasn't bought — not a speed demo.
 
-## 4. What it would take to actually serve this
+## 5. Structured (neuron-level) pruning: closing the "real speedup" gap, with a real measured number
 
 Two separate benefits get conflated when people say "pruning helps
 deployment," and they have different requirements:
@@ -159,24 +182,115 @@ deployment," and they have different requirements:
 - **Memory.** Active-parameter count is a real, achievable win
   *independent of any speedup* — store only the active weights (e.g. COO
   or CSR format) and the model genuinely takes less memory at 90%+
-  sparsity. This works today, with the masks already produced by this
-  repo, with zero additional engineering.
-- **Compute/latency.** This needs the sparse-kernel or structured-sparsity
-  work described in §3, neither of which exists here. Unstructured
-  sparsity at the levels this project reaches (90-95%) is usually *not*
-  enough on its own to win on commodity dense hardware — the practical
-  threshold where naive sparse formats start beating dense compute is
-  often higher (sometimes 95-98%+, and pattern-dependent), and even then
-  requires a runtime that actually has a sparse code path.
+  sparsity. This works today, with the masks §4 already produces, with
+  zero additional engineering.
+- **Compute/latency.** Unstructured masking can't deliver this (§4) — a
+  dense matmul never skips a zero. Structured (neuron-level) pruning can,
+  because dropping a whole output column genuinely shrinks the matrix
+  itself, and a completely ordinary dense matmul on a smaller matrix does
+  less work, no sparse kernel required.
 
-Given the Pareto sweep's actual result — saliency pruning stays accurate
-*and stable* across seeds even at 95% sparsity (`results/CLAIM.md`) — the
-natural next step toward something deployable isn't a sparse kernel for
-this specific unstructured mask. It's converting the criterion/schedule to
-score and prune *structured* units: e.g. if every incoming (or outgoing)
-connection to a hidden unit in the 128-wide layers ends up pruned, that
-unit can be dropped entirely and the layer's actual matrix dimensions
-shrink — a regular dense matmul on a smaller matrix, no new kernel needed.
-That's a concrete, scoped extension; it's not implemented here because the
-locked scope for this project is correctness and honest accounting, not a
-serving pipeline.
+`prune/criteria.py`'s `neuron_magnitude_scores`/`neuron_saliency_scores`
+score whole output columns (`axis=0` of `weight`, since
+`weight.shape == (in_features, out_features)`); `prune/mask.py`'s
+`prune_neurons_to_count` zeros entire columns (and the corresponding bias
+entries — see §2's bias_mask discussion) by the same `-inf`-forces-never-
+revives top-k trick `prune_to_sparsity` already uses, just at column
+granularity. `prune/compress.py::compress_model` then builds a genuinely
+smaller dense model: each `Linear`'s dead output columns make the *next*
+`Linear`'s corresponding input rows dead too (`ReLU(0) == 0` passes
+deadness through unchanged), so alive-neuron index sets thread layer to
+layer, row-slicing and column-slicing real NumPy arrays — no `Tensor`, no
+mask multiply left to skip, because there's nothing left to skip.
+
+**The speedup is real, but the first measurement of it overstated it** —
+caught in review, not before: comparing `model(Tensor(x))` (the
+Tensor-wrapped path, pays for autodiff bookkeeping that's never used in a
+pure forward pass) against `compressed(x)` (plain NumPy, no such
+bookkeeping) conflates genuine FLOP reduction with the unrelated cost of
+the autodiff engine's own per-call overhead disappearing. Decomposing it
+directly: of the originally-measured ~4x ratio, about 28% was autodiff
+overhead, not matrix size. The fair, apples-to-apples number — plain
+NumPy at full size vs. plain NumPy at compressed size, `evaluation/cost.py::time_dense_numpy_vs_compressed_forward`
+— is **~2.8x** at 75% structured sparsity on the 128-wide hidden layers.
+Still a real, substantial, measured win; just not the original number.
+This is exactly the standard §4 holds unstructured masking to ("never
+claim a speedup from multiplying by zero") applied a level deeper: a
+benchmark comparing two code paths that differ in more than one way can
+overstate a real effect just as easily as dense×mask can fake one
+entirely.
+
+Accuracy cost: a real comparison sweep (`train/run_structured_vs_unstructured.py`,
+3 sparsities × 3 seeds) found structured and unstructured saliency
+pruning statistically indistinguishable on this task (~99.7% both,
+std≈0.001) up to 85% sparsity — the expected "structured is coarser, so
+it should cost more accuracy at matched sparsity" penalty didn't show up,
+consistent with this task's known overparameterization
+(`results/CLAIM.md`). Reported as measured, not as the expected result.
+
+## 6. Dynamic sparse training (regrowth): a real implementation, with a real negative result
+
+The masking design's `w_eff = weight * mask` graph node (§2) has a second
+use beyond making masked-gradient-is-zero fall out for free: `w_eff.grad`,
+populated by `matmul`'s backward, is *not* mask-gated — masking only
+happens one step later, inside `mul()`'s own backward
+(`weight.grad += w_eff.grad * mask.data`, see `engine/ops.py::mul`). So
+`w_eff.grad` already carries the dense, unmasked "how much would this
+matter if it were active" signal for *every* entry, including ones whose
+`weight.grad` is exactly 0 — the same first-order Taylor logic
+`saliency_scores` already uses, with zero new engine math required.
+`prune/criteria.py::accumulate_dense_gradients` sums this signal across a
+sweep (it needs its own accumulation logic, unlike `weight.grad`: `w_eff`
+is a fresh `Tensor` every forward call, so its `.grad` doesn't accumulate
+across batches on its own the way a persistent `Tensor`'s does).
+
+`prune/mask.py::revive_to_count` mirrors `prune_to_sparsity`'s `-inf`
+trick inverted (already-active entries forced to `-inf` so top-k can only
+select among masked-off ones — the grow-side analogue of "never
+revives"). `prune/dst.py::run_exchange_cycle` composes it with a drop
+step into a net-zero-active-count grow+drop cycle. **The drop step's
+scoring needs three buckets, not two — a real bug caught before commit,
+not after a failing test**: a first draft lumped revived and
+still-inactive entries into a single "excluded → `+inf`" bucket. That's
+backwards for the still-inactive half: it should be `-inf` (never
+reactivate via the drop step — that's not a revival path), while only the
+just-revived entries should be `+inf` (must survive this cycle, since
+they haven't had a chance to prove themselves yet). Lumping both at
+`+inf` silently breaks the moment there are more excluded entries than
+the keep budget, since top-k then can't distinguish "force this in" from
+"force this out" — wrong masks, not a crash. Caught by manually tracing
+the failure mode against a constructed adversarial case before writing
+any test, then proven directly:
+`tests/test_dst.py::test_run_exchange_cycle_excludes_just_revived_from_drop`.
+
+**Measured result: regrowth substantially hurts accuracy and stability on
+this task, not the literature's usual finding.** `train/run_dst_comparison.py`
+(5 seeds, 90% and 95% sparsity, otherwise identical to the non-regrowth
+run) found:
+
+| sparsity | without regrowth | with regrowth (DST) |
+|---|---|---|
+| 90% | 99.67% ± 0.07% | 94.89% ± 4.68% |
+| 95% | 99.53% ± 0.19% | 91.02% ± 11.59% (worst seed: 68.3%) |
+
+Plausible explanation, not independently verified: plain saliency pruning
+already converges to a near-optimal fixed mask quickly on this small,
+heavily-overparameterized task (§5/`results/CLAIM.md`), so continuously
+disturbing that mask via exchange cycles adds churn the small amount of
+training between cycles can't recover from — the opposite of the regime
+DST is usually evaluated in (a large/hard task where the early fixed mask
+is itself suboptimal and benefits from reallocation). Reported honestly
+because it's what was measured, not what was expected going in.
+
+A real, narrow correctness gap was found and fixed at the boundary
+between this feature and §2's mask-aware Adam, exactly where the two
+weren't jointly tested before: `set_mask` resyncs `bias_mask` from
+`mask.any(axis=0)` on every call, so `revive_to_count` reviving a single
+weight into a column that had been driven fully to zero silently
+un-freezes that neuron's bias — but the revival path only ever reset the
+*weight's* Adam state. Without an explicit check for this transition, the
+bias would resume updating on the very next step using real, pre-death
+momentum — the exact stale-optimizer-state failure mode §2 exists to
+prevent, just rediscovered for bias instead of weight. Fixed in
+`run_exchange_cycle` by snapshotting `bias_mask` before reviving and
+resetting state for any index that flips 0→1 as a side effect.
