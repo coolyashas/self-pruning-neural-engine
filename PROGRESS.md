@@ -13,7 +13,7 @@ passing + committed), not when merely started.
 | 4 | feat(engine): matmul + sum/mean reductions | [x] | `c9e2ae5`. Verified: matmul backward vs finite-diff, sum over axis=None/0/1 + keepdims, mean divide-by-N vs finite-diff, chained matmul->mean backward |
 | 5 | feat(engine): backward() with topo-sort + grad accumulation | [x] | `bf362a1`. Verified: full multi-op pipeline vs finite-diff, diamond/shared-node accumulation, requires_grad=False branch (no crash, no spurious grad), repeated backward() accumulates |
 | 6 | test(engine): finite-difference gradient checks for all ops | [x] | `tests/test_engine_ops.py`, 23 tests passing: add/sub/mul/div (plain + 2 broadcast shapes), matmul, sum/mean (axis+keepdims variants), shared-node accumulation, requires_grad=False skip, repeated-backward accumulation |
-| 7 | feat(engine): ReLU + tanh | [ ] | |
+| 7 | feat(engine): ReLU + tanh | [x] | `engine/activations.py`; gradcheck added immediately in `tests/test_activations.py` (3 tests, 26 total passing) rather than deferred |
 | 8 | feat(engine): fused numerically-stable softmax cross-entropy | [ ] | |
 | 9 | test(engine): grad-check softmax-CE + broadcasting bias case | [ ] | |
 | 10 | feat(nn): Linear layer + He init | [ ] | |
