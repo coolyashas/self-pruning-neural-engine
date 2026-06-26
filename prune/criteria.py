@@ -64,3 +64,40 @@ def accumulate_gradients(model, X: np.ndarray, y: np.ndarray, batch_size: int) -
     for start in range(0, n, batch_size):
         idx = slice(start, start + batch_size)
         softmax_cross_entropy(model(Tensor(X[idx])), y[idx]).backward()
+
+
+def accumulate_dense_gradients(model, X: np.ndarray, y: np.ndarray, batch_size: int) -> dict:
+    """Sweep (X, y) once, accumulating each prunable Linear layer's
+    w_eff.grad (the dense/unmasked gradient signal -- see nn/linear.py
+    and engine/ops.py's mul() backward) into a persistent per-layer
+    total. Returns {layer: accumulated_w_eff_grad}.
+
+    A parallel function to accumulate_gradients, not a modification of
+    it: weight is the same persistent Tensor every forward call, so
+    weight.grad naturally sums across a sweep via accumulate_grad's +=.
+    w_eff is a FRESH Tensor every call (nn/linear.py rebuilds it each
+    __call__), so its .grad does NOT accumulate on its own -- this
+    function does that summing explicitly, reading layer.w_eff.grad
+    immediately after each batch's backward() and adding it into the
+    running total before the next forward call creates a new w_eff and
+    the old one (and its .grad) becomes garbage. Getting that ordering
+    backwards (read after the next forward instead of before) would hit
+    a fresh w_eff with grad=None, not silently wrong numbers -- but it
+    still must be done by construction, not by luck.
+
+    Leaves weight.grad dirty on exit, same contract as
+    accumulate_gradients -- callers must zero_grad before any subsequent
+    real training step.
+    """
+    prunable = [layer for layer in model.layers if hasattr(layer, "mask")]
+    totals = {layer: np.zeros_like(layer.weight.data) for layer in prunable}
+
+    for p in model.parameters():
+        p.grad = None
+    n = X.shape[0]
+    for start in range(0, n, batch_size):
+        idx = slice(start, start + batch_size)
+        softmax_cross_entropy(model(Tensor(X[idx])), y[idx]).backward()
+        for layer in prunable:
+            totals[layer] += layer.w_eff.grad
+    return totals
