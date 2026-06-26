@@ -17,6 +17,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from engine.tensor import Tensor
+from evaluation.cost import weight_sparsity
 from nn import Linear, ReLU, Sequential
 from optim import Adam
 from prune import accumulate_gradients, cubic_sparsity, magnitude_scores, prune_to_sparsity, saliency_scores
@@ -56,11 +57,6 @@ def main(
     total_steps = epochs * steps_per_epoch
     prune_end_step = int(total_steps * prune_end_frac)
 
-    def achieved_sparsity() -> float:
-        active = sum(layer.mask.data.sum() for layer in prunable_layers)
-        total = sum(layer.mask.data.size for layer in prunable_layers)
-        return 1.0 - active / total
-
     def on_step_end(step, model, loss_value):
         if step < prune_start_step or step % prune_every != 0:
             return
@@ -80,7 +76,7 @@ def main(
         mean_loss = float(np.mean(losses_so_far[-steps_per_epoch:]))
         preds = np.argmax(mlp(Tensor(X)).data, axis=1)
         accuracy = float((preds == y).mean())
-        history.append((step, achieved_sparsity(), mean_loss, accuracy))
+        history.append((step, weight_sparsity(mlp), mean_loss, accuracy))
 
     train(
         mlp,
