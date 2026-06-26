@@ -51,26 +51,52 @@ def neuron_saliency_scores(layer: Linear) -> np.ndarray:
 
 
 def accumulate_gradients(model, X: np.ndarray, y: np.ndarray, batch_size: int) -> None:
-    """Sweep (X, y) once in mini-batches, accumulating into every
-    parameter's .grad via repeated backward() calls -- no zero_grad
-    between batches, no optimizer step. Purely to get a stable gradient
-    signal for saliency scoring; a single small batch is too noisy.
-    Leaves .grad populated on exit -- callers must zero_grad before any
-    subsequent real training step, or that step's gradient adds onto this.
+    """Sweep (X, y) once in mini-batches, leaving every parameter's .grad
+    equal to the TRUE full-dataset-mean gradient -- not a single
+    optimizer step, and not simply "sum of each batch's gradient" either.
+    Purely to get a stable gradient signal for saliency scoring; a single
+    small batch is too noisy. Leaves .grad populated on exit -- callers
+    must zero_grad before any subsequent real training step, or that
+    step's gradient adds onto this.
+
+    Each backward() call computes the gradient of THAT BATCH's mean loss
+    (softmax_cross_entropy always divides by the batch's own size). If
+    batch_size doesn't evenly divide N -- the common case, e.g. N=900,
+    batch_size=64 leaves a final batch of size 4 -- naively summing those
+    per-batch-mean gradients via repeated backward() calls (the previous
+    behavior here) silently overweights the smaller batch's examples: a
+    4-example batch would get the same TOTAL influence on the sum as a
+    full 64-example batch, a 16x per-example overweighting. Confirmed by
+    direct execution: the old result matched "sum of per-batch means",
+    not the true dataset-mean gradient, by a measurable margin.
+
+    Fixed by explicitly weighting each batch's contribution by
+    n_batch / n before accumulating: sum_k (n_k/n) * batch_mean_grad_k
+    = (1/n) * sum_k sum_{i in batch k} grad_i, which IS the true
+    full-dataset mean gradient, regardless of how batch_size divides n.
     """
-    for p in model.parameters():
-        p.grad = None
+    params = model.parameters()
     n = X.shape[0]
+    totals = [np.zeros_like(p.data) for p in params]
     for start in range(0, n, batch_size):
         idx = slice(start, start + batch_size)
+        n_batch = X[idx].shape[0]
+        for p in params:
+            p.grad = None
         softmax_cross_entropy(model(Tensor(X[idx])), y[idx]).backward()
+        batch_weight = n_batch / n
+        for p, total in zip(params, totals):
+            total += batch_weight * p.grad
+    for p, total in zip(params, totals):
+        p.grad = total
 
 
 def accumulate_dense_gradients(model, X: np.ndarray, y: np.ndarray, batch_size: int) -> dict:
     """Sweep (X, y) once, accumulating each prunable Linear layer's
     w_eff.grad (the dense/unmasked gradient signal -- see nn/linear.py
     and engine/ops.py's mul() backward) into a persistent per-layer
-    total. Returns {layer: accumulated_w_eff_grad}.
+    total equal to the TRUE full-dataset-mean gradient. Returns
+    {layer: accumulated_w_eff_grad}.
 
     A parallel function to accumulate_gradients, not a modification of
     it: weight is the same persistent Tensor every forward call, so
@@ -85,19 +111,35 @@ def accumulate_dense_gradients(model, X: np.ndarray, y: np.ndarray, batch_size: 
     a fresh w_eff with grad=None, not silently wrong numbers -- but it
     still must be done by construction, not by luck.
 
-    Leaves weight.grad dirty on exit, same contract as
-    accumulate_gradients -- callers must zero_grad before any subsequent
-    real training step.
+    Same per-batch weighting fix as accumulate_gradients (see its
+    docstring for the full derivation): each backward() call computes a
+    BATCH-MEAN gradient, so naively summing un-weighted contributions
+    over an uneven final batch overweights its examples. Both the
+    returned dense totals AND the side-effect weight.grad left on every
+    parameter (dst_step relies on this matching a standalone
+    accumulate_gradients call exactly, to justify skipping a second
+    sweep) are weighted by n_batch/n here, so that side-effect contract
+    still holds with the TRUE dataset-mean gradient, not the old "sum of
+    batch means".
     """
     prunable = [layer for layer in model.layers if hasattr(layer, "mask")]
-    totals = {layer: np.zeros_like(layer.weight.data) for layer in prunable}
-
-    for p in model.parameters():
-        p.grad = None
+    params = model.parameters()
     n = X.shape[0]
+    dense_totals = {layer: np.zeros_like(layer.weight.data) for layer in prunable}
+    param_totals = [np.zeros_like(p.data) for p in params]
+
     for start in range(0, n, batch_size):
         idx = slice(start, start + batch_size)
+        n_batch = X[idx].shape[0]
+        for p in params:
+            p.grad = None
         softmax_cross_entropy(model(Tensor(X[idx])), y[idx]).backward()
+        batch_weight = n_batch / n
         for layer in prunable:
-            totals[layer] += layer.w_eff.grad
-    return totals
+            dense_totals[layer] += batch_weight * layer.w_eff.grad
+        for p, total in zip(params, param_totals):
+            total += batch_weight * p.grad
+
+    for p, total in zip(params, param_totals):
+        p.grad = total
+    return dense_totals

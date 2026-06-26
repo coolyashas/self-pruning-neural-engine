@@ -26,23 +26,52 @@ def test_single_batch_matches_plain_backward():
     assert np.allclose(via_helper, direct)
 
 
-def test_multi_batch_sums_correctly():
+def test_multi_batch_matches_true_dataset_mean_with_even_batches():
     mlp = Sequential(Linear(2, 4), ReLU(), Linear(4, 3))
     X = np.random.randn(8, 2)
     y = np.random.randint(0, 3, size=8)
     layer0 = mlp.layers[0]
 
-    # hand-summed reference: each batch's w_eff.grad, added up independently
-    expected = np.zeros_like(layer0.weight.data)
+    for p in mlp.parameters():
+        p.grad = None
+    softmax_cross_entropy(mlp(Tensor(X)), y).backward()
+    true_mean = layer0.w_eff.grad.copy()
+
+    totals = accumulate_dense_gradients(mlp, X, y, batch_size=4)  # divides 8 evenly
+    assert np.allclose(totals[layer0], true_mean)
+
+
+def test_multi_batch_matches_true_dataset_mean_with_uneven_final_batch():
+    """batch_size=3 does not divide N=8 evenly (batches of 3, 3, 2).
+    Each backward() computes a BATCH-mean gradient -- naively summing
+    those un-weighted (the previous behavior here) overweights the
+    smaller final batch's examples. The correct total must match a
+    single direct backward() over the whole dataset, not "sum of each
+    batch's w_eff.grad".
+    """
+    mlp = Sequential(Linear(2, 4), ReLU(), Linear(4, 3))
+    X = np.random.randn(8, 2)
+    y = np.random.randint(0, 3, size=8)
+    layer0 = mlp.layers[0]
+
+    for p in mlp.parameters():
+        p.grad = None
+    softmax_cross_entropy(mlp(Tensor(X)), y).backward()
+    true_mean = layer0.w_eff.grad.copy()
+
+    # the buggy reference this test used to assert against, kept only to
+    # prove it's now genuinely different from the true mean.
+    buggy_sum = np.zeros_like(layer0.weight.data)
     for start in range(0, 8, 3):
         for p in mlp.parameters():
             p.grad = None
         idx = slice(start, start + 3)
         softmax_cross_entropy(mlp(Tensor(X[idx])), y[idx]).backward()
-        expected += layer0.w_eff.grad
+        buggy_sum += layer0.w_eff.grad
+    assert not np.allclose(buggy_sum, true_mean)
 
     totals = accumulate_dense_gradients(mlp, X, y, batch_size=3)
-    assert np.allclose(totals[layer0], expected)
+    assert np.allclose(totals[layer0], true_mean)
 
 
 def test_returns_every_prunable_layer():
