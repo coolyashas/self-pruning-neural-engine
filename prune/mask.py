@@ -38,3 +38,18 @@ def keep_mask_from_scores(scores: np.ndarray, sparsity: float) -> np.ndarray:
         top_indices = np.argsort(scores.ravel())[n - n_keep :]
         flat_keep[top_indices] = True
     return flat_keep.reshape(scores.shape)
+
+
+def prune_to_sparsity(layer: Linear, scores: np.ndarray, target_sparsity: float) -> None:
+    """Prune `layer` to exactly `target_sparsity`, monotonically: only
+    ever removes more connections, never revives one. Already-pruned
+    entries are forced to score -inf so keep_mask_from_scores's top-k
+    ranking can never select them again, without duplicating its logic.
+    """
+    current_mask = layer.mask.data
+    current_sparsity = 1.0 - current_mask.mean()
+    assert target_sparsity >= current_sparsity - 1e-9, (
+        "target sparsity must not decrease -- this path has no regrowth"
+    )
+    adjusted_scores = np.where(current_mask == 0, -np.inf, scores)
+    set_mask(layer, keep_mask_from_scores(adjusted_scores, target_sparsity))
