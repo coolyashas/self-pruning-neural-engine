@@ -35,6 +35,10 @@ passing + committed), not when merely started.
 | 26 | docs: DESIGN.md | [x] | Four sections per spec scope: criterion derivation (first-order Taylor, |w·g|), masked-grad/mask-aware-Adam design (mul()'s existing backward gives masked-grad-zero for free; zero-grad ≠ frozen Adam state; the global-t revival trade-off named explicitly), the bottleneck (dense×mask measured no-speedup, what a real speedup needs), and serving (memory win is real today, compute win needs structured sparsity). Cross-checked every cited test name and number against the actual test files before writing them down |
 | 27 | docs: README run commands, uv setup | [x] | Filled in all run commands (gradcheck/Part2/Part3/Pareto), added `evaluation/` to the layout table, plain-venv fallback for uv, links to DESIGN.md/CLAIM.md. Verified every command actually runs as documented; re-running Part2/Part3 reproduced identical numbers (0.9967/0.9978/0.90 sparsity) confirming the reproducibility claim, not just asserting it. All 27 commits done |
 
+Commits 28-39 close two gaps found in a later re-check against the original spec: a real (not just disclosed) cost measurement via structured/neuron-level pruning + compressed inference, and full dynamic sparse training (regrowth). See `using-this-prompt-concurrent-manatee.md` plan for the full design rationale.
+
+| 28 | feat(prune): structured (neuron-level) magnitude/saliency criteria | [x] | `prune/criteria.py` gained `neuron_magnitude_scores`/`neuron_saliency_scores` (axis=0 sum over each output column, since `weight.shape == (in_features, out_features)`). `tests/test_structured_criteria.py`: shape check on a deliberately non-square layer (catches axis mixups loudly), formula match, gradient-required assertion, and a neuron-level rank-disagreement test mirroring commit 20's key per-weight test (99 tests total passing) |
+
 ## Workflow per commit
 
 1. Check [Common_pittfall.md](Common_pittfall.md) for the section(s)

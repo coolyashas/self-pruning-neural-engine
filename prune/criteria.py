@@ -29,6 +29,27 @@ def saliency_scores(layer: Linear) -> np.ndarray:
     return np.abs(layer.weight.data * layer.weight.grad)
 
 
+def neuron_magnitude_scores(layer: Linear) -> np.ndarray:
+    """Structured analogue of magnitude_scores: one score per output
+    neuron (weight.shape == (in_features, out_features), so a neuron is
+    a column -- axis=0 sums over everything feeding into it). Coarser by
+    design: a neuron with one huge weight and many tiny ones can outrank
+    a neuron with uniformly moderate weights, which a per-weight score
+    would never conflate.
+    """
+    return np.abs(layer.weight.data).sum(axis=0)
+
+
+def neuron_saliency_scores(layer: Linear) -> np.ndarray:
+    """Structured analogue of saliency_scores: one score per output
+    neuron, summing |w*g| over its incoming column. Same accumulated-
+    gradient contract as saliency_scores -- needs weight.grad populated
+    via accumulate_gradients first.
+    """
+    assert layer.weight.grad is not None, "need accumulated gradients before scoring saliency"
+    return np.abs(layer.weight.data * layer.weight.grad).sum(axis=0)
+
+
 def accumulate_gradients(model, X: np.ndarray, y: np.ndarray, batch_size: int) -> None:
     """Sweep (X, y) once in mini-batches, accumulating into every
     parameter's .grad via repeated backward() calls -- no zero_grad
