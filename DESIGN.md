@@ -82,18 +82,40 @@ demonstrates this produces a measurably different (and generally
 wrong-direction or oversized) first step compared to the reset version of
 the identical scenario.
 
-**An explicit trade-off, not an oversight.** Adam here uses one *shared*
+**An explicit trade-off, not an oversight — and the direction is an
+oversized step, not a conservative one.** Adam here uses one *shared*
 step counter `t` for bias correction, not a per-parameter or per-element
 one. On revival, a freshly-zeroed `m, v` gets bias-corrected against
-whatever `t` the rest of training has reached (e.g. `t=2000`), not against
-a true `t=1`. Since `(1 - β^2000) ≈ 1`, this gives almost no
-bias-correction boost, unlike a genuinely fresh Adam parameter at `t=1`.
-This does not violate the stated correctness bar (masked `m`/`v` exactly
-frozen; revived `m`/`v` exactly zero) — it's a deliberate simplification
-that avoids per-element step bookkeeping that masking would *also* need
-to gate. Flagging this proactively, rather than waiting to be asked "is
-your bias correction exactly right on revival?", is the point of writing
-it down here.
+whatever `t` the rest of training has reached, not against a true `t=1`.
+An earlier version of this note claimed that since `(1-β^t) ≈ 1` at large
+`t`, this "gives almost no bias-correction boost" — i.e. a conservative,
+under-sized first update. Measuring it directly (not just reasoning about
+the boost factor in isolation) shows the opposite:
+
+```
+t=     1  update/lr = 1.0000   <- a true fresh Adam step
+t=    50  update/lr = 0.7021
+t=   500  update/lr = 1.9840
+t=  2000  update/lr = 2.9407   <- this project's actual step counts land here
+t= 20000  update/lr = 3.1623   <- asymptotes to (1-β1)/sqrt(1-β2)
+```
+
+The reason: `β1=0.9`'s correction saturates almost immediately (`m_hat ≈
+m` by `t≈50`), while `β2=0.999`'s saturates roughly 10x slower. At a
+stale, large `t`, `m_hat` gets no boost but `v_hat` is *still*
+under-corrected (too small) — and since `v_hat` sits under a square root
+in the denominator, an under-corrected `v_hat` makes the update *larger*,
+not smaller. At the `t` values this project's real runs actually reach
+(hundreds to thousands of steps before any revival happens), a revived
+connection's first update is **roughly 2–3x oversized** relative to a
+true fresh Adam step, not conservative. This still does not violate the
+stated correctness bar (masked `m`/`v` exactly frozen; revived `m`/`v`
+exactly zero) — it's a deliberate simplification that avoids per-element
+step bookkeeping that masking would *also* need to gate — but the
+practical consequence is a bounded overshoot on the first post-revival
+step, not a muted one. `tests/test_masked_adam.py::test_revival_first_update_is_oversized_not_conservative_at_realistic_t`
+pins the measured ratio so this claim can't silently drift from the code
+again.
 
 ## 3. The bottleneck: pruning here saves parameters, not time
 

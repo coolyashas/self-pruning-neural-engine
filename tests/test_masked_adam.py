@@ -7,6 +7,7 @@ oversized or wrong-direction first step.
 """
 
 import numpy as np
+import pytest
 
 from engine.tensor import Tensor
 from nn.linear import Linear
@@ -189,3 +190,40 @@ def test_masked_adam_end_to_end_with_real_backward():
     assert layer.weight.data[1, 2] == weight_at_masked_entry
     assert opt.m[0][1, 2] == 0.0
     assert opt.v[0][1, 2] == 0.0
+
+
+def test_revival_first_update_is_oversized_not_conservative_at_realistic_t():
+    """Pins a finding from the staff review: an earlier version of
+    DESIGN.md's "shared step counter" trade-off note claimed revival at
+    a stale, large `t` gives "almost no bias-correction boost" --
+    implying a conservative, under-sized first update. Measuring it
+    directly shows the opposite. beta1=0.9's bias-correction factor
+    saturates almost immediately (no boost by t~50), but beta2=0.999's
+    saturates roughly 10x slower -- so at a stale large t, m_hat gets no
+    boost while v_hat is STILL under-corrected (too small), and since
+    v_hat sits under a sqrt in the update's denominator, an
+    under-corrected v_hat makes the update LARGER, not smaller. At the
+    t values this project's real runs actually reach (hundreds to
+    thousands of steps), a revived connection's first update is ~2-3x
+    OVERSIZED relative to a true fresh Adam step, not conservative.
+    This doesn't violate correctness (m/v are still exactly 0 right
+    after reset -- see the tests above) -- it's a real, bounded,
+    explainable property of using one shared `t`, and the direction
+    matters for anyone reasoning about training stability after
+    revival.
+    """
+    beta1, beta2, eps, lr, g = 0.9, 0.999, 1e-8, 0.01, 1.0
+
+    def first_update_ratio(t):
+        m_hat = ((1 - beta1) * g) / (1 - beta1**t)
+        v_hat = ((1 - beta2) * g**2) / (1 - beta2**t)
+        return (lr * m_hat / (np.sqrt(v_hat) + eps)) / lr
+
+    assert first_update_ratio(1) == pytest.approx(1.0, abs=1e-3)  # true fresh step: ~1x
+    # at the large, stale t values this project's real runs reach, the
+    # ratio is well above 1x, not "almost no boost" (~1x or below):
+    assert first_update_ratio(2000) > 2.5
+    assert first_update_ratio(20000) > 3.0
+    # and it asymptotes to the closed form (1-beta1)/sqrt(1-beta2):
+    asymptote = (1 - beta1) / np.sqrt(1 - beta2)
+    assert first_update_ratio(20000) == pytest.approx(asymptote, rel=1e-3)
