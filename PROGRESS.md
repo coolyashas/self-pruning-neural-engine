@@ -16,7 +16,7 @@ passing + committed), not when merely started.
 | 7 | feat(engine): ReLU + tanh | [x] | `engine/activations.py`; gradcheck added immediately in `tests/test_activations.py` (3 tests, 26 total passing) rather than deferred |
 | 8 | feat(engine): fused numerically-stable softmax cross-entropy | [x] | `engine/loss.py`; manually verified vs naive reference, finite-diff, hand-derived (probs-one_hot)/N, and overflow stress test (naive softmax NaNs, ours stays finite). Formal pytest deferred to commit 9 as planned |
 | 9 | test(engine): grad-check softmax-CE + broadcasting bias case | [x] | `tests/test_softmax_ce.py`: gradcheck across 3 shape/label configs, large-logit finite-value stress test, and a full matmul+bias-broadcast+softmax-CE pipeline through one real backward() call (31 tests total passing) |
-| 10 | feat(nn): Linear layer + He init | [ ] | |
+| 10 | feat(nn): Linear layer + He init | [x] | `nn/linear.py`; `tests/test_linear.py`: forward shape, end-to-end gradcheck through `__call__` (x, W, b all vs finite-diff), He-init std statistical check, `parameters()` (35 tests total passing) |
 | 11 | feat(nn): Sequential MLP container | [ ] | |
 | 12 | feat(optim): SGD-with-momentum | [ ] | |
 | 13 | feat(optim): Adam from scratch (bias-corrected) | [ ] | |
