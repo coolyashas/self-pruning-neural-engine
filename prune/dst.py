@@ -12,7 +12,9 @@ from __future__ import annotations
 import numpy as np
 
 from nn.linear import Linear
-from prune.mask import _top_k_keep_mask, revive_to_count, set_mask
+from prune.criteria import accumulate_dense_gradients, accumulate_gradients
+from prune.mask import _top_k_keep_mask, prune_to_sparsity, revive_to_count, set_mask
+from prune.schedule import cubic_sparsity
 
 
 def run_exchange_cycle(
@@ -62,3 +64,60 @@ def run_exchange_cycle(
     )
     keep = _top_k_keep_mask(adjusted_drop_scores, n_active_before)
     set_mask(layer, keep)
+
+
+def dst_step(
+    model,
+    optimizer,
+    X: np.ndarray,
+    y: np.ndarray,
+    batch_size: int,
+    step: int,
+    prune_start_step: int,
+    prune_end_step: int,
+    final_sparsity: float,
+    drop_score_fn,
+    exchange_fraction: float = 0.1,
+) -> None:
+    """One scheduled DST maintenance step -- called from on_step_end at
+    the same cadence/spirit as run_part3's existing pruning hook. Two
+    phases:
+
+    1. Ramp phase (step < prune_end_step): identical to run_part3's
+       existing non-regrowth behavior -- accumulate_gradients +
+       prune_to_sparsity toward the cubic schedule's target, monotonic,
+       no regrowth yet. Reusing prune_to_sparsity here (not
+       run_exchange_cycle) during the ramp matters: there's nothing to
+       "exchange" yet while sparsity is still increasing toward target.
+    2. Maintenance phase (step >= prune_end_step): final_sparsity is
+       already reached; switch to grow+drop exchange cycles per
+       prunable layer, sized as exchange_fraction * n_active (rounded,
+       at least 1), using accumulate_dense_gradients' w_eff.grad signal
+       to decide what to grow and drop_score_fn (the existing
+       saliency/magnitude criterion) to decide what to drop. Net
+       active-connection count per layer stays constant in this phase,
+       by run_exchange_cycle's own contract.
+
+    The maintenance phase runs two full dataset sweeps (one for
+    accumulate_dense_gradients's growth signal, one to refresh
+    weight.grad for drop_score_fn) -- twice the forward/backward cost of
+    the ramp phase's single sweep. Known, accepted inefficiency for a
+    correctness-first first version, not silently absorbed: the two
+    sweeps are computed from materially different signals (w_eff.grad
+    vs weight.grad) and could in principle be fused into one pass later
+    if this turns out to matter in practice.
+    """
+    prunable = [layer for layer in model.layers if hasattr(layer, "mask")]
+
+    if step < prune_end_step:
+        target = cubic_sparsity(step, prune_start_step, prune_end_step, final_sparsity)
+        accumulate_gradients(model, X, y, batch_size)
+        for layer in prunable:
+            prune_to_sparsity(layer, drop_score_fn(layer), target)
+    else:
+        dense_grads = accumulate_dense_gradients(model, X, y, batch_size)
+        accumulate_gradients(model, X, y, batch_size)
+        for layer in prunable:
+            n_active = int(layer.mask.data.sum())
+            n_exchange = max(1, round(exchange_fraction * n_active))
+            run_exchange_cycle(layer, drop_score_fn(layer), dense_grads[layer], n_exchange, optimizer)

@@ -8,10 +8,14 @@ answer to "reason about the stability implications of regrowth."
 import numpy as np
 
 from engine.tensor import Tensor
+from nn.activations import ReLU
 from nn.linear import Linear
+from nn.sequential import Sequential
 from optim.adam import Adam
-from prune.dst import run_exchange_cycle
+from prune.criteria import accumulate_gradients, magnitude_scores
+from prune.dst import dst_step, run_exchange_cycle
 from prune.mask import prune_to_sparsity, set_mask
+from prune.schedule import cubic_sparsity
 from utils.seed import set_seed
 
 set_seed(0)
@@ -182,3 +186,97 @@ def test_repeated_prune_revive_prune_same_connection_does_not_corrupt_state():
     v_hat = ((1 - b2) * 4.0) / (1 - b2**t)
     expected = weight_before - lr * m_hat / (np.sqrt(v_hat) + eps)
     assert np.allclose(layer.weight.data[target], expected, atol=1e-10)
+
+
+def _build_mlp_with_copied_weights(source: Sequential) -> Sequential:
+    """A second model, identical weights/bias to `source`, so a dst_step
+    call on one and the manual equivalent on the other can be compared
+    bit-for-bit -- there's no built-in deep-copy for Linear/Sequential.
+    """
+    copy = Sequential(Linear(2, 8), ReLU(), Linear(8, 3))
+    for src, dst in zip(source.layers, copy.layers):
+        if hasattr(src, "weight"):
+            dst.weight.data = src.weight.data.copy()
+            dst.bias.data = src.bias.data.copy()
+    return copy
+
+
+def test_dst_step_ramp_phase_matches_existing_prune_to_sparsity_behavior():
+    """dst_step's ramp branch (step < prune_end_step) must produce a mask
+    byte-identical to run_part3's existing non-regrowth on_step_end
+    (accumulate_gradients + prune_to_sparsity directly) given the same
+    inputs -- a regression-style cross-check between the two code paths.
+    """
+    mlp_a = Sequential(Linear(2, 8), ReLU(), Linear(8, 3))
+    mlp_b = _build_mlp_with_copied_weights(mlp_a)
+
+    X = np.random.randn(20, 2)
+    y = np.random.randint(0, 3, size=20)
+
+    pairs_a = mlp_a.masked_parameters()
+    opt_a = Adam([p for p, _ in pairs_a], lr=0.01, masks=[m for _, m in pairs_a])
+
+    step, prune_start_step, prune_end_step, final_sparsity = 10, 5, 50, 0.6
+
+    dst_step(
+        mlp_a,
+        opt_a,
+        X,
+        y,
+        batch_size=10,
+        step=step,
+        prune_start_step=prune_start_step,
+        prune_end_step=prune_end_step,
+        final_sparsity=final_sparsity,
+        drop_score_fn=magnitude_scores,
+    )
+
+    # manual equivalent of run_part3's existing non-regrowth on_step_end
+    target = cubic_sparsity(step, prune_start_step, prune_end_step, final_sparsity)
+    accumulate_gradients(mlp_b, X, y, batch_size=10)
+    for layer in [layer for layer in mlp_b.layers if hasattr(layer, "mask")]:
+        prune_to_sparsity(layer, magnitude_scores(layer), target)
+
+    prunable_a = [layer for layer in mlp_a.layers if hasattr(layer, "mask")]
+    prunable_b = [layer for layer in mlp_b.layers if hasattr(layer, "mask")]
+    for layer_a, layer_b in zip(prunable_a, prunable_b):
+        assert np.array_equal(layer_a.mask.data, layer_b.mask.data)
+
+
+def test_dst_step_maintenance_phase_keeps_sparsity_constant_over_many_cycles():
+    """Once final_sparsity is reached, repeated dst_step calls must hold
+    each layer's active count exactly constant -- the "roughly constant"
+    DST claim, measured across many consecutive cycles, not just one.
+    """
+    mlp = Sequential(Linear(2, 8), ReLU(), Linear(8, 3))
+    pairs = mlp.masked_parameters()
+    opt = Adam([p for p, _ in pairs], lr=0.01, masks=[m for _, m in pairs])
+    prunable = [layer for layer in mlp.layers if hasattr(layer, "mask")]
+
+    X = np.random.randn(20, 2)
+    y = np.random.randint(0, 3, size=20)
+
+    # pre-prune to final_sparsity directly, simulating "ramp already done"
+    final_sparsity = 0.5
+    accumulate_gradients(mlp, X, y, batch_size=10)
+    for layer in prunable:
+        prune_to_sparsity(layer, magnitude_scores(layer), final_sparsity)
+    active_counts_before = [int(layer.mask.data.sum()) for layer in prunable]
+
+    prune_start_step, prune_end_step = 5, 50
+    for step in range(prune_end_step, prune_end_step + 10 * 3, 3):  # several maintenance cycles
+        dst_step(
+            mlp,
+            opt,
+            X,
+            y,
+            batch_size=10,
+            step=step,
+            prune_start_step=prune_start_step,
+            prune_end_step=prune_end_step,
+            final_sparsity=final_sparsity,
+            drop_score_fn=magnitude_scores,
+            exchange_fraction=0.2,
+        )
+        active_counts_now = [int(layer.mask.data.sum()) for layer in prunable]
+        assert active_counts_now == active_counts_before
