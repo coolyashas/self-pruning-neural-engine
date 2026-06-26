@@ -42,6 +42,26 @@ def test_run_exchange_cycle_is_net_zero_active_count():
         assert int(layer.mask.data.sum()) == n_active_before
 
 
+def test_run_exchange_cycle_is_a_no_op_on_a_fully_dead_layer():
+    """At n_active_before == 0, the drop step's keep-target is also 0,
+    so _top_k_keep_mask(scores, n_keep=0) returns all-False regardless
+    of score -- even a +inf-forced "must survive" entry. Before this was
+    guarded, run_exchange_cycle would revive an entry and then
+    immediately drop it again in the very same call, violating its own
+    documented "revived entries survive their first cycle" guarantee.
+    Confirm the guard makes it a true no-op instead.
+    """
+    layer = Linear(3, 3)
+    set_mask(layer, np.zeros((3, 3)))  # fully dead: nothing active
+    assert layer.mask.data.sum() == 0.0
+
+    grow_scores = np.ones((3, 3))  # everything looks like a good revival candidate
+    drop_scores = np.abs(np.random.randn(3, 3))
+    run_exchange_cycle(layer, drop_scores, grow_scores, n_exchange=1, optimizer=_DummyOptimizer())
+
+    assert layer.mask.data.sum() == 0.0  # still nothing active -- no revive-then-drop churn
+
+
 def test_run_exchange_cycle_excludes_just_revived_from_drop():
     """The landmine this function is built around: a freshly-revived
     entry must survive its first cycle even if it would otherwise be the

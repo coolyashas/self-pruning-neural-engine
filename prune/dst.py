@@ -51,8 +51,21 @@ def run_exchange_cycle(
     optimizer passed in must be the one built from this model's
     masked_parameters(), so layer.weight is actually in its parameter
     list (reset_state looks it up via .index()).
+
+    Guarded no-op at n_active_before == 0: the drop step's "keep N
+    highest" target IS n_active_before, so at 0 it would keep nothing
+    regardless of score -- even a +inf-forced "must survive" entry gets
+    discarded, since _top_k_keep_mask(scores, n_keep=0) returns all-False
+    unconditionally. Without this guard, a fully-dead layer would revive
+    an entry and then immediately drop it again in the same cycle,
+    silently violating the "revived entries survive their first cycle"
+    guarantee above. There's nothing to "exchange" when nothing is
+    active to begin with, so skipping entirely is also the correct
+    semantics, not just a crash-avoidance hack.
     """
     n_active_before = int(layer.mask.data.sum())
+    if n_active_before == 0:
+        return
 
     revived = revive_to_count(layer, grow_scores, n_exchange)
     if revived.any():
