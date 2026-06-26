@@ -98,14 +98,15 @@ def dst_step(
        active-connection count per layer stays constant in this phase,
        by run_exchange_cycle's own contract.
 
-    The maintenance phase runs two full dataset sweeps (one for
-    accumulate_dense_gradients's growth signal, one to refresh
-    weight.grad for drop_score_fn) -- twice the forward/backward cost of
-    the ramp phase's single sweep. Known, accepted inefficiency for a
-    correctness-first first version, not silently absorbed: the two
-    sweeps are computed from materially different signals (w_eff.grad
-    vs weight.grad) and could in principle be fused into one pass later
-    if this turns out to matter in practice.
+    The maintenance phase needs only ONE dataset sweep, not two:
+    accumulate_dense_gradients's backward() calls populate weight.grad as
+    a side effect of the same computation that produces w_eff.grad --
+    mul()'s backward writes both from one pass over the data -- so
+    drop_score_fn (which reads weight.grad for saliency) is already
+    correctly populated by the time accumulate_dense_gradients returns.
+    A second accumulate_gradients call here would silently redo
+    identical work for zero benefit (verified bit-for-bit identical
+    against a standalone accumulate_gradients call on the same data).
     """
     prunable = [layer for layer in model.layers if hasattr(layer, "mask")]
 
@@ -116,7 +117,6 @@ def dst_step(
             prune_to_sparsity(layer, drop_score_fn(layer), target)
     else:
         dense_grads = accumulate_dense_gradients(model, X, y, batch_size)
-        accumulate_gradients(model, X, y, batch_size)
         for layer in prunable:
             n_active = int(layer.mask.data.sum())
             n_exchange = max(1, round(exchange_fraction * n_active))

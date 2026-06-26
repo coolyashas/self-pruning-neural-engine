@@ -243,6 +243,47 @@ def test_dst_step_ramp_phase_matches_existing_prune_to_sparsity_behavior():
         assert np.array_equal(layer_a.mask.data, layer_b.mask.data)
 
 
+def test_dst_step_maintenance_phase_does_one_sweep_not_two(monkeypatch):
+    """accumulate_dense_gradients's backward() pass already leaves
+    weight.grad correctly populated (same backward call that produces
+    w_eff.grad also writes weight.grad, via mul()'s backward) -- a
+    second accumulate_gradients sweep would silently redo identical
+    work. Pin this by making accumulate_gradients raise if dst_step
+    ever calls it again during the maintenance phase.
+    """
+    import prune.dst as dst_module
+
+    mlp = Sequential(Linear(2, 8), ReLU(), Linear(8, 3))
+    pairs = mlp.masked_parameters()
+    opt = Adam([p for p, _ in pairs], lr=0.01, masks=[m for _, m in pairs])
+    prunable = [layer for layer in mlp.layers if hasattr(layer, "mask")]
+
+    X = np.random.randn(20, 2)
+    y = np.random.randint(0, 3, size=20)
+
+    accumulate_gradients(mlp, X, y, batch_size=10)
+    for layer in prunable:
+        prune_to_sparsity(layer, magnitude_scores(layer), target_sparsity=0.5)
+
+    def _fail_if_called(*args, **kwargs):
+        raise AssertionError("dst_step's maintenance phase must not sweep the dataset twice")
+
+    monkeypatch.setattr(dst_module, "accumulate_gradients", _fail_if_called)
+
+    dst_step(
+        mlp,
+        opt,
+        X,
+        y,
+        batch_size=10,
+        step=100,
+        prune_start_step=5,
+        prune_end_step=50,
+        final_sparsity=0.5,
+        drop_score_fn=magnitude_scores,
+    )  # must not raise
+
+
 def test_dst_step_maintenance_phase_keeps_sparsity_constant_over_many_cycles():
     """Once final_sparsity is reached, repeated dst_step calls must hold
     each layer's active count exactly constant -- the "roughly constant"
