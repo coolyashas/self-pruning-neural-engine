@@ -129,6 +129,45 @@ def test_without_reset_state_revival_inherits_stale_momentum():
     assert not np.isclose(run(reset=True), run(reset=False))
 
 
+def test_structurally_dead_neurons_bias_stays_exactly_zero_under_continued_training():
+    """Regression for a real bug found running an actual Part-4 training
+    script, not a synthetic case: bias has no mask of its own degrading
+    its weight column -- a structurally-pruned neuron's bias kept
+    drifting via stale Adam momentum even after its weight was correctly
+    frozen, so the dense forward still emitted ReLU(0 + bias) for a
+    "dead" neuron instead of exactly 0 (which prune/compress.py's
+    compress_model silently assumed). bias_mask (nn/linear.py, synced by
+    prune.mask.set_mask) closes this the same way mask-aware Adam already
+    closes it for weight.
+    """
+    from prune.criteria import neuron_magnitude_scores
+    from prune.mask import prune_neurons_to_count
+
+    layer = Linear(4, 6)
+    pairs = layer.masked_parameters()
+    params = [p for p, _ in pairs]
+    masks = [m for _, m in pairs]
+    opt = Adam(params, lr=0.1, masks=masks)
+
+    for _ in range(10):  # build up real, nonzero bias momentum first
+        opt.zero_grad()
+        layer(Tensor(np.random.randn(5, 4))).sum().backward()
+        opt.step()
+    assert not np.allclose(layer.bias.data, 0.0)  # sanity: bias actually moved
+
+    prune_neurons_to_count(layer, neuron_magnitude_scores(layer), target_active=4)  # kills 2 neurons
+    dead = ~layer.mask.data.any(axis=0)
+    assert dead.sum() == 2
+    assert np.all(layer.bias.data[dead] == 0.0)  # zeroed immediately
+
+    for _ in range(30):  # continued training, generic loss, no special-casing
+        opt.zero_grad()
+        layer(Tensor(np.random.randn(5, 4))).sum().backward()
+        opt.step()
+
+    assert np.all(layer.bias.data[dead] == 0.0)  # still exactly 0 -- no drift
+
+
 def test_masked_adam_end_to_end_with_real_backward():
     """Combines masking (commit 16) with mask-aware Adam (commit 17)
     through a real Linear layer and real backward(), not hand-set grads.

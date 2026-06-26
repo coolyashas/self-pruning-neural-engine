@@ -14,9 +14,17 @@ from nn.linear import Linear
 
 
 def set_mask(layer: Linear, keep: np.ndarray) -> None:
-    """keep: boolean (or 0/1) array matching layer.weight's shape; True/1 = active."""
+    """keep: boolean (or 0/1) array matching layer.weight's shape; True/1 = active.
+
+    Also resyncs layer.bias_mask from this new mask (any nonzero entry in
+    a column -> that neuron's bias stays active). This is the single
+    place layer.mask is ever written, so it's the right place to keep
+    bias_mask consistent regardless of which caller changed the mask
+    (per-weight or per-neuron pruning both end up here).
+    """
     assert keep.shape == layer.weight.shape, (keep.shape, layer.weight.shape)
     layer.mask.data = keep.astype(np.float64)
+    layer.bias_mask.data = layer.mask.data.any(axis=0).astype(np.float64)
 
 
 def _top_k_keep_mask(scores: np.ndarray, n_keep: int) -> np.ndarray:
@@ -87,6 +95,20 @@ def prune_neurons_to_count(layer: Linear, scores: np.ndarray, target_active: int
     only partly pruned by earlier unstructured pruning still counts as
     active until this function zeros out the rest of its column.
 
+    Also zeros the bias entry of every newly-dead neuron. set_mask already
+    resyncs layer.bias_mask so mask-aware Adam freezes that bias going
+    forward (see nn/linear.py) -- but freezing alone holds it at whatever
+    value it had at the exact moment it died, not necessarily 0. A
+    structurally-dead neuron's bias must be exactly 0, or the dense
+    forward still emits ReLU(0 + bias) for it, a nonzero constant that
+    compress_model (prune/compress.py) would wrongly treat as no
+    contribution at all. The two pieces together -- explicit zero here,
+    frozen going forward by bias_mask -- are both required: this caught a
+    real bug where bias kept drifting after pruning even though the
+    weight was correctly frozen (the exact same zero-gradient-isn't-
+    frozen-state lesson mask-aware Adam already encodes for weight,
+    rediscovered for bias).
+
     Deliberately not built on top of prune_to_sparsity: that function's
     -inf trick operates per-entry (current_mask == 0), not per-column, so
     reusing it as-is would let a half-dead column escape full-column
@@ -106,3 +128,4 @@ def prune_neurons_to_count(layer: Linear, scores: np.ndarray, target_active: int
     new_mask = layer.mask.data.copy()
     new_mask[:, ~keep_neurons] = 0.0
     set_mask(layer, new_mask)
+    layer.bias.data[~keep_neurons] = 0.0

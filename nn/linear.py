@@ -27,13 +27,22 @@ class Linear:
         # other non-trainable input. Only weights get pruned, not bias --
         # standard practice; bias isn't a "connection" to remove.
         self.mask = Tensor(np.ones_like(self.weight.data), requires_grad=False)
+        # bias_mask tracks "does this output neuron still have any active
+        # weight" (kept in sync by prune.mask.set_mask). Needed so Adam can
+        # freeze a structurally-dead neuron's bias too: once every incoming
+        # weight is pruned, bias has nothing masking its OWN forward
+        # contribution (z = bias alone), so without this its momentum keeps
+        # nudging it away from the 0 it was reset to -- the same
+        # zero-gradient-isn't-frozen-state lesson as mask-aware Adam,
+        # just for bias instead of weight.
+        self.bias_mask = Tensor(np.ones(out_features), requires_grad=False)
 
     def __call__(self, x: Tensor) -> Tensor:
         w_eff = self.weight * self.mask
         return x @ w_eff + self.bias
 
     def masked_parameters(self) -> list[tuple[Tensor, Tensor | None]]:
-        return [(self.weight, self.mask), (self.bias, None)]
+        return [(self.weight, self.mask), (self.bias, self.bias_mask)]
 
     def parameters(self) -> list[Tensor]:
         return [p for p, _ in self.masked_parameters()]

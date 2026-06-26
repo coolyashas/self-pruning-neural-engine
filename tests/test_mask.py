@@ -16,6 +16,18 @@ def test_default_mask_is_all_ones_and_excluded_from_parameters():
     assert layer.parameters() == [layer.weight, layer.bias]
 
 
+def test_set_mask_resyncs_bias_mask_from_column_alive():
+    layer = Linear(4, 3)
+    assert np.allclose(layer.bias_mask.data, 1.0)  # default: every neuron alive
+
+    keep = np.ones((4, 3))
+    keep[:, 1] = 0.0  # column 1 entirely dead -- that neuron has no active weight
+    keep[0, 2] = 0.0  # column 2 only partly pruned -- still alive
+    set_mask(layer, keep)
+
+    assert np.array_equal(layer.bias_mask.data, [1.0, 0.0, 1.0])
+
+
 def test_masked_weight_gradient_is_exactly_zero():
     """The core requirement: dL/dweight at a masked entry must be exactly
     0, falling out of mul()'s backward (grad * mask), not patched in.

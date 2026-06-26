@@ -62,6 +62,11 @@ def compress_model(model: Sequential) -> CompressedSequential:
     Linear's input-side slicing is driven by the PREVIOUS Linear's
     output-side alive set, not recomputed from this layer's own mask.
 
+    This relies on a dead neuron's PRE-activation being exactly 0, i.e.
+    bias == 0 there too, not just its weight column -- prune.mask's
+    prune_neurons_to_count and the bias_mask it maintains (nn/linear.py)
+    are what guarantee that holds; this function doesn't re-check it.
+
     First Linear: no upstream deadness -- input features (e.g. raw 2D
     spiral coordinates) were never neurons, never sliced. Last Linear:
     output (e.g. logits) is never sliced either, even if its mask has

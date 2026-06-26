@@ -72,6 +72,29 @@ def test_compress_last_layer_output_never_sliced_even_if_masked():
     assert np.allclose(_dense_forward(mlp, x), compressed(x), atol=1e-12)
 
 
+def test_compress_matches_dense_forward_with_nonzero_bias():
+    """Regression for a real bug: bias is never masked (only weights are),
+    so a structurally-pruned neuron with a NONZERO bias still emits
+    ReLU(0 + bias) in the dense forward -- not exactly 0. compress_model
+    assumes a pruned neuron contributes nothing downstream, which is only
+    true because prune_neurons_to_count also zeros a retired neuron's
+    bias. This test uses a trained-looking nonzero bias (every earlier
+    test in this file used freshly-constructed layers, whose bias starts
+    at exactly 0.0 -- which accidentally hid this bug).
+    """
+    mlp = _make_mlp()
+    for layer in mlp.layers:
+        if hasattr(layer, "bias"):
+            layer.bias.data = np.random.randn(*layer.bias.data.shape)  # nonzero, "post-training"-like
+
+    prune_neurons_to_count(mlp.layers[0], neuron_magnitude_scores(mlp.layers[0]), 4)
+    prune_neurons_to_count(mlp.layers[2], neuron_magnitude_scores(mlp.layers[2]), 3)
+
+    compressed = compress_model(mlp)
+    x = np.random.randn(6, 2)
+    assert np.allclose(_dense_forward(mlp, x), compressed(x), atol=1e-10)
+
+
 def test_compress_does_not_alias_original_weights():
     mlp = _make_mlp()
     prune_neurons_to_count(mlp.layers[0], neuron_magnitude_scores(mlp.layers[0]), 4)
