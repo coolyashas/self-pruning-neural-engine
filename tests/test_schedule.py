@@ -66,12 +66,37 @@ def test_prune_to_sparsity_never_revives():
     assert np.all(layer.mask.data[pruned_after_step1 == 0] == 0.0)
 
 
-def test_prune_to_sparsity_rejects_decreasing_target():
+def test_prune_to_sparsity_decreasing_target_is_a_noop_not_an_error():
+    """No regrowth on this path, but a target that's behind the already-
+    achieved sparsity isn't misuse -- it's a no-op (clamped), not an
+    assertion failure. See test_rounding_overshoot_does_not_break_schedule
+    for why this actually happens during a real run.
+    """
     layer = Linear(4, 4)
     scores = np.abs(np.random.randn(4, 4))
     prune_to_sparsity(layer, scores, target_sparsity=0.5)
-    with pytest.raises(AssertionError):
-        prune_to_sparsity(layer, scores, target_sparsity=0.2)
+    mask_after_first = layer.mask.data.copy()
+    prune_to_sparsity(layer, scores, target_sparsity=0.2)  # behind schedule
+    assert np.array_equal(layer.mask.data, mask_after_first)  # unchanged
+
+
+def test_rounding_overshoot_does_not_break_schedule():
+    """Regression for a real bug found running the Part-3 script: a small
+    layer's rounding can overshoot the continuous schedule's target
+    (round() pushes achieved sparsity slightly ahead), so the *next*
+    scheduled target can land slightly BELOW the already-achieved level
+    even though the schedule itself is monotonic. That must not crash.
+    """
+    layer = Linear(16, 16)  # 256 entries, same coarse granularity as the bug
+    scores = np.abs(np.random.randn(16, 16))
+
+    # a target that rounds UP the number pruned, overshooting slightly
+    prune_to_sparsity(layer, scores, target_sparsity=0.8359375)  # exact: 42/256 kept
+    achieved = 1 - layer.mask.data.mean()
+
+    # next target is continuously larger but still less than the
+    # discretely-achieved sparsity above -- must not raise
+    prune_to_sparsity(layer, scores, target_sparsity=achieved - 0.0001)
 
 
 def test_gradual_schedule_end_to_end():

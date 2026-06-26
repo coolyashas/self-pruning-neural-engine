@@ -19,37 +19,47 @@ def set_mask(layer: Linear, keep: np.ndarray) -> None:
     layer.mask.data = keep.astype(np.float64)
 
 
-def keep_mask_from_scores(scores: np.ndarray, sparsity: float) -> np.ndarray:
-    """Boolean keep-mask, same shape as `scores`, that removes exactly
-    `sparsity` fraction of entries -- the lowest-scoring ones. Top-k via
-    argsort, not a percentile/threshold cutoff: a threshold can over- or
-    undershoot the target count when many scores tie, top-k can't.
-    Criterion-agnostic: works for magnitude scores, saliency scores, or
-    anything else that scores "how much would removing this hurt".
+def _top_k_keep_mask(scores: np.ndarray, n_keep: int) -> np.ndarray:
+    """Boolean mask, same shape as `scores`, keeping exactly the n_keep
+    highest-scoring entries. Top-k via argsort, not a percentile/threshold
+    cutoff: a threshold can over- or undershoot the target count when
+    scores tie, top-k can't.
     """
-    assert 0.0 <= sparsity <= 1.0
-    n = scores.size
-    n_keep = round((1 - sparsity) * n)
-
-    flat_keep = np.zeros(n, dtype=bool)
+    flat_keep = np.zeros(scores.size, dtype=bool)
     if n_keep > 0:
-        # argsort ascending; the highest-scoring n_keep indices are the
-        # last n_keep entries of that order
-        top_indices = np.argsort(scores.ravel())[n - n_keep :]
+        top_indices = np.argsort(scores.ravel())[scores.size - n_keep :]
         flat_keep[top_indices] = True
     return flat_keep.reshape(scores.shape)
 
 
+def keep_mask_from_scores(scores: np.ndarray, sparsity: float) -> np.ndarray:
+    """Boolean keep-mask removing exactly `sparsity` fraction of entries
+    -- the lowest-scoring ones. Criterion-agnostic: works for magnitude
+    scores, saliency scores, or anything else that scores "how much would
+    removing this hurt".
+    """
+    assert 0.0 <= sparsity <= 1.0
+    n_keep = round((1 - sparsity) * scores.size)
+    return _top_k_keep_mask(scores, n_keep)
+
+
 def prune_to_sparsity(layer: Linear, scores: np.ndarray, target_sparsity: float) -> None:
-    """Prune `layer` to exactly `target_sparsity`, monotonically: only
-    ever removes more connections, never revives one. Already-pruned
-    entries are forced to score -inf so keep_mask_from_scores's top-k
-    ranking can never select them again, without duplicating its logic.
+    """Prune `layer` toward `target_sparsity`, monotonically: only ever
+    removes more connections, never revives one. Already-pruned entries
+    are forced to score -inf so top-k ranking can never select them again.
+
+    If the discretely-achieved sparsity from an earlier call already
+    meets or exceeds this call's (continuous) target, this is a no-op,
+    not an error: the cubic schedule's target is continuous but counts
+    are integers, so rounding can occasionally overshoot ahead of
+    schedule, and the next call's target needs a moment to catch back up.
     """
     current_mask = layer.mask.data
-    current_sparsity = 1.0 - current_mask.mean()
-    assert target_sparsity >= current_sparsity - 1e-9, (
-        "target sparsity must not decrease -- this path has no regrowth"
-    )
+    n_total = current_mask.size
+    n_active = int(current_mask.sum())
+    n_keep_target = min(round((1 - target_sparsity) * n_total), n_active)
+    if n_keep_target == n_active:
+        return
+
     adjusted_scores = np.where(current_mask == 0, -np.inf, scores)
-    set_mask(layer, keep_mask_from_scores(adjusted_scores, target_sparsity))
+    set_mask(layer, _top_k_keep_mask(adjusted_scores, n_keep_target))
