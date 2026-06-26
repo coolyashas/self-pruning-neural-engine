@@ -6,6 +6,7 @@ from engine.tensor import Tensor
 
 
 def matmul(a: Tensor, b: Tensor) -> Tensor:
+    # O(N*D*H) forward and backward, same as the matmul itself.
     assert a.data.ndim == 2 and b.data.ndim == 2, "matmul only supports 2D tensors"
     out = Tensor(a.data @ b.data, a.requires_grad or b.requires_grad, (a, b), "matmul")
 

@@ -44,6 +44,9 @@ class Tensor:
         Builds a topo order by DFS (parents before the node they produced),
         then walks it in reverse so every node's _backward() only fires
         once all of its consumers have already accumulated into its grad.
+        O(V+E) in graph size; DFS is recursive, so pathologically deep
+        graphs could hit Python's recursion limit (not a concern at our
+        MLP depths).
         """
         if grad is None:
             assert self.data.size == 1, "backward() with no grad arg needs a scalar output"
