@@ -28,6 +28,28 @@ def test_set_mask_resyncs_bias_mask_from_column_alive():
     assert np.array_equal(layer.bias_mask.data, [1.0, 0.0, 1.0])
 
 
+def test_w_eff_grad_is_the_unmasked_dense_gradient():
+    """w_eff = weight*mask is itself a graph node; mul()'s backward only
+    applies masking on the step FROM w_eff.grad TO weight.grad, so
+    w_eff.grad (populated by matmul's backward, with no mask knowledge at
+    all) is the dense signal -- "how much would loss change if this
+    connection were fully active" -- even at entries where weight.grad is
+    exactly 0. This is what regrowth scoring (prune/criteria.py) reads.
+    """
+    layer = Linear(4, 3)
+    keep = np.ones((4, 3))
+    keep[1, 2] = 0.0
+    set_mask(layer, keep)
+
+    x = Tensor(np.random.randn(5, 4), requires_grad=True)
+    layer(x).sum().backward()
+
+    assert layer.weight.grad[1, 2] == 0.0  # masked entry: weight.grad is exactly 0
+    assert layer.w_eff.grad[1, 2] != 0.0  # but the dense/unmasked signal isn't
+    # away from the masked entry, weight.grad and w_eff.grad agree (mask=1 there)
+    assert np.allclose(layer.weight.grad[0, 0], layer.w_eff.grad[0, 0])
+
+
 def test_masked_weight_gradient_is_exactly_zero():
     """The core requirement: dL/dweight at a masked entry must be exactly
     0, falling out of mul()'s backward (grad * mask), not patched in.

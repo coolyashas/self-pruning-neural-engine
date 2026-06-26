@@ -38,8 +38,14 @@ class Linear:
         self.bias_mask = Tensor(np.ones(out_features), requires_grad=False)
 
     def __call__(self, x: Tensor) -> Tensor:
-        w_eff = self.weight * self.mask
-        return x @ w_eff + self.bias
+        # stored on self (not just a local) so external code can read
+        # w_eff.grad after backward() -- it's the gradient one step before
+        # mul()'s masking is applied, i.e. the dense/unmasked signal "how
+        # much would loss change if this connection were fully active",
+        # unlike weight.grad which is always exactly 0 at a masked entry.
+        # Used by prune/criteria.py's regrowth scoring.
+        self.w_eff = self.weight * self.mask
+        return x @ self.w_eff + self.bias
 
     def masked_parameters(self) -> list[tuple[Tensor, Tensor | None]]:
         return [(self.weight, self.mask), (self.bias, self.bias_mask)]
