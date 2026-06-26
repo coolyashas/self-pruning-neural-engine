@@ -32,5 +32,8 @@ class Linear:
         w_eff = self.weight * self.mask
         return x @ w_eff + self.bias
 
+    def masked_parameters(self) -> list[tuple[Tensor, Tensor | None]]:
+        return [(self.weight, self.mask), (self.bias, None)]
+
     def parameters(self) -> list[Tensor]:
-        return [self.weight, self.bias]
+        return [p for p, _ in self.masked_parameters()]
