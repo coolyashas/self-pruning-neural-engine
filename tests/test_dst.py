@@ -132,7 +132,6 @@ def test_revive_un_freezing_a_dead_neurons_bias_resets_its_stale_moments():
     pre-death momentum -- exactly the stale-state bug mask-aware Adam
     exists to prevent, just rediscovered on the bias side.
     """
-    from prune.criteria import neuron_magnitude_scores
     from prune.mask import prune_neurons_to_count
 
     layer = Linear(3, 3)
@@ -147,7 +146,13 @@ def test_revive_un_freezing_a_dead_neurons_bias_resets_its_stale_moments():
     stale_bias_v = opt.v[1][1]
     assert stale_bias_m != 0.0 and stale_bias_v != 0.0
 
-    prune_neurons_to_count(layer, neuron_magnitude_scores(layer), target_active=2)  # kills neuron 1
+    # explicit, deterministic scores -- not neuron_magnitude_scores of
+    # randomly-initialized weights, whose ranking (and so which neuron
+    # actually dies) would depend on however much of the global RNG
+    # stream earlier tests/files happened to consume. Force neuron 1 to
+    # be the one killed, unambiguously, regardless of run order.
+    forced_kill_scores = np.array([10.0, -10.0, 10.0])
+    prune_neurons_to_count(layer, forced_kill_scores, target_active=2)  # kills neuron 1
     assert layer.bias_mask.data[1] == 0.0
     assert opt.m[1][1] == stale_bias_m  # frozen, untouched by the freeze itself -- expected
 

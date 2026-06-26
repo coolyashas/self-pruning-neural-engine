@@ -17,14 +17,37 @@ def set_mask(layer: Linear, keep: np.ndarray) -> None:
     """keep: boolean (or 0/1) array matching layer.weight's shape; True/1 = active.
 
     Also resyncs layer.bias_mask from this new mask (any nonzero entry in
-    a column -> that neuron's bias stays active). This is the single
-    place layer.mask is ever written, so it's the right place to keep
-    bias_mask consistent regardless of which caller changed the mask
-    (per-weight or per-neuron pruning both end up here).
+    a column -> that neuron's bias stays active), AND zeros the bias
+    value itself for any neuron that just transitioned from alive to
+    fully dead. This is the single place layer.mask is ever written, so
+    it's the right place to keep bias state consistent regardless of
+    which caller changed the mask (per-weight pruning, per-neuron
+    pruning, or DST's revive/drop steps all end up here).
+
+    Freezing alone (bias_mask -> 0) holds the bias at whatever value it
+    had the moment its last incoming weight died, not necessarily 0 --
+    confirmed by direct execution: a neuron with every incoming weight
+    zeroed through a plain unstructured set_mask() call (not
+    prune_neurons_to_count, which already zeroed bias explicitly) kept
+    emitting a constant nonzero ReLU(0 + stale_bias) output even though
+    its mask column reports zero active connections -- "dead by mask
+    count" and "functionally dead" had silently diverged. A neuron with
+    zero active connections must actually contribute zero, or
+    compress_model (which relies on a dead neuron's pre-activation being
+    exactly 0 before dropping it) and any sparsity accounting built on
+    "the mask defines the active network" are both wrong without anyone
+    having touched bias.data directly.
     """
     assert keep.shape == layer.weight.shape, (keep.shape, layer.weight.shape)
+    new_column_alive = keep.astype(bool).any(axis=0)
+    # bias_mask already mirrors the OLD mask's column_alive state here,
+    # since this function is the only place either array is written.
+    was_column_alive = layer.bias_mask.data.astype(bool)
+    newly_dead = was_column_alive & ~new_column_alive
+
     layer.mask.data = keep.astype(np.float64)
-    layer.bias_mask.data = layer.mask.data.any(axis=0).astype(np.float64)
+    layer.bias_mask.data = new_column_alive.astype(np.float64)
+    layer.bias.data[newly_dead] = 0.0
 
 
 def _top_k_keep_mask(scores: np.ndarray, n_keep: int) -> np.ndarray:
@@ -107,19 +130,14 @@ def prune_neurons_to_count(layer: Linear, scores: np.ndarray, target_active: int
     only partly pruned by earlier unstructured pruning still counts as
     active until this function zeros out the rest of its column.
 
-    Also zeros the bias entry of every newly-dead neuron. set_mask already
-    resyncs layer.bias_mask so mask-aware Adam freezes that bias going
-    forward (see nn/linear.py) -- but freezing alone holds it at whatever
-    value it had at the exact moment it died, not necessarily 0. A
-    structurally-dead neuron's bias must be exactly 0, or the dense
-    forward still emits ReLU(0 + bias) for it, a nonzero constant that
-    compress_model (prune/compress.py) would wrongly treat as no
-    contribution at all. The two pieces together -- explicit zero here,
-    frozen going forward by bias_mask -- are both required: this caught a
-    real bug where bias kept drifting after pruning even though the
-    weight was correctly frozen (the exact same zero-gradient-isn't-
-    frozen-state lesson mask-aware Adam already encodes for weight,
-    rediscovered for bias).
+    Bias handling for every newly-dead neuron (explicit zero, plus
+    frozen going forward) now lives entirely in set_mask -- it's the
+    general fix for the bug originally caught and fixed here in
+    isolation: bias kept drifting after a neuron's last weight died,
+    because freezing via bias_mask alone holds a value, it doesn't zero
+    it. set_mask now does both for ANY caller that drives a column fully
+    dead (this function, prune_to_sparsity, or DST's revive/drop steps),
+    not just this one.
 
     Deliberately not built on top of prune_to_sparsity: that function's
     -inf trick operates per-entry (current_mask == 0), not per-column, so
@@ -140,7 +158,6 @@ def prune_neurons_to_count(layer: Linear, scores: np.ndarray, target_active: int
     new_mask = layer.mask.data.copy()
     new_mask[:, ~keep_neurons] = 0.0
     set_mask(layer, new_mask)
-    layer.bias.data[~keep_neurons] = 0.0
 
 
 def revive_to_count(layer: Linear, scores: np.ndarray, n_revive: int) -> np.ndarray:

@@ -47,6 +47,32 @@ def test_set_mask_resyncs_bias_mask_from_column_alive():
     assert np.array_equal(layer.bias_mask.data, [1.0, 0.0, 1.0])
 
 
+def test_set_mask_zeros_bias_of_a_neuron_killed_by_plain_unstructured_pruning():
+    """A neuron can be driven fully dead by plain per-weight pruning
+    (set_mask/prune_to_sparsity), not just prune_neurons_to_count --
+    nothing guarantees that path can't zero an entire column by chance.
+    Before this fix, bias_mask correctly froze that neuron's bias going
+    forward, but its VALUE was left untouched: a neuron with zero active
+    incoming weights could still emit a constant, nonzero
+    ReLU(0 + stale_bias) output -- "dead by mask count" and
+    "functionally dead" had silently diverged. Confirmed by direct
+    execution before this fix existed.
+    """
+    layer = Linear(3, 4)
+    layer.bias.data[1] = 2.5  # nonzero on purpose -- the default-zero bias would hide this bug
+
+    keep = np.ones((3, 4))
+    keep[:, 1] = 0.0  # every incoming weight to neuron 1 pruned, via plain set_mask
+    set_mask(layer, keep)
+
+    assert layer.bias_mask.data[1] == 0.0  # frozen going forward (already covered elsewhere)
+    assert layer.bias.data[1] == 0.0  # AND zeroed now, not left at the stale 2.5
+
+    x = Tensor(np.random.randn(2, 3))
+    out = layer(x)
+    assert np.all(out.data[:, 1] == 0.0)  # neuron 1 contributes nothing, not a constant 2.5
+
+
 def test_w_eff_grad_is_the_unmasked_dense_gradient():
     """w_eff = weight*mask is itself a graph node; mul()'s backward only
     applies masking on the step FROM w_eff.grad TO weight.grad, so
