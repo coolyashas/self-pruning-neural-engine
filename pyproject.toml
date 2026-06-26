@@ -1,0 +1,25 @@
+[project]
+name = "aqua-selfprune"
+version = "0.1.0"
+description = "A from-scratch autodiff engine, MLP, mask-aware Adam, and self-pruning training loop in pure Python + NumPy."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "matplotlib",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["engine", "nn", "optim", "prune", "train", "utils"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
