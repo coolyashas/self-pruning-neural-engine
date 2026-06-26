@@ -4,13 +4,14 @@ Tracks the 27-commit plan for the AQUA self-pruning network. One row per
 commit. Mark `[x]` only once the commit is actually made (code + tests
 passing + committed), not when merely started.
 
+
 | # | Commit | Status | Notes |
 |---|--------|--------|-------|
-| 1 | chore: repo scaffold | [x] | `a45c7cb`; gap (missing seed docstring) closed in `0a762cf` |
-| 2 | feat(engine): Tensor wrapping ndarray, parent tracking, grad storage | [x] | `8c9a774` |
-| 3 | feat(engine): elementwise add/sub/mul/div with unbroadcast backward | [x] | manually verified: forward, bias-broadcast unbroadcast, shared-node (`x+x`) accumulation, finite-diff cross-check |
-| 4 | feat(engine): matmul + sum/mean reductions | [x] | manually verified: matmul backward vs finite-diff, sum over axis=None/0/1 + keepdims, mean divide-by-N vs finite-diff, chained matmul->mean backward |
-| 5 | feat(engine): backward() with topo-sort + grad accumulation | [x] | manually verified: full multi-op pipeline vs finite-diff, diamond/shared-node accumulation, requires_grad=False branch (no crash, no spurious grad), repeated backward() accumulates |
+| 1 | chore: repo scaffold | [x] | `5be28ad`; gap (missing seed docstring) closed in `53ce2d4` |
+| 2 | feat(engine): Tensor wrapping ndarray, parent tracking, grad storage | [x] | `b83d4ff` |
+| 3 | feat(engine): elementwise add/sub/mul/div with unbroadcast backward | [x] | `cb3f42c`; comments trimmed in `786f8f9`. Verified: forward, bias-broadcast unbroadcast, shared-node (`x+x`) accumulation, finite-diff cross-check |
+| 4 | feat(engine): matmul + sum/mean reductions | [x] | `c9e2ae5`. Verified: matmul backward vs finite-diff, sum over axis=None/0/1 + keepdims, mean divide-by-N vs finite-diff, chained matmul->mean backward |
+| 5 | feat(engine): backward() with topo-sort + grad accumulation | [x] | `bf362a1`. Verified: full multi-op pipeline vs finite-diff, diamond/shared-node accumulation, requires_grad=False branch (no crash, no spurious grad), repeated backward() accumulates |
 | 6 | test(engine): finite-difference gradient checks for all ops | [ ] | |
 | 7 | feat(engine): ReLU + tanh | [ ] | |
 | 8 | feat(engine): fused numerically-stable softmax cross-entropy | [ ] | |
