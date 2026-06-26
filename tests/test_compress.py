@@ -120,3 +120,14 @@ def test_compress_unsupported_layer_type_raises():
     mlp = Sequential(Linear(2, 4), NotALayer())
     with pytest.raises(NotImplementedError):
         compress_model(mlp)
+
+
+def test_compress_model_with_no_linear_layers_raises_clearly():
+    """linear_layers[-1] on an empty list raised a bare, confusing
+    IndexError before this guard -- nonsensical input (a model with no
+    Linear layers has nothing to compress), but should fail loudly with
+    a clear message rather than a raw indexing error.
+    """
+    mlp = Sequential(ReLU())
+    with pytest.raises(AssertionError, match="no Linear layers"):
+        compress_model(mlp)

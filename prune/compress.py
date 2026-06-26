@@ -76,6 +76,7 @@ def compress_model(model: Sequential) -> CompressedSequential:
     with (see train/run_part4_structured.py).
     """
     linear_layers = [layer for layer in model.layers if isinstance(layer, Linear)]
+    assert linear_layers, "compress_model: model has no Linear layers to compress"
     compressed_layers = []
     alive_out = None  # alive-output-neuron index array from the previous Linear
 
