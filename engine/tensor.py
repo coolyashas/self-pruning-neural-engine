@@ -68,6 +68,21 @@ class Tensor:
         # Purely descriptive (debugging/printing), e.g. "add", "matmul".
         self._op = _op
 
+    def accumulate_grad(self, grad: np.ndarray) -> None:
+        """Add `grad` into `self.grad`, never overwrite it.
+
+        A Tensor can be a parent of more than one downstream op (e.g.
+        `b = a + a`, or a weight reused at two points in the graph), so
+        each contribution must be summed, not replace the previous one --
+        overwriting would silently drop every contribution but the last.
+        Lazily allocates `self.grad` as zeros on the first call instead of
+        upfront in __init__, since most tensors created during a forward
+        pass (e.g. plain input data) never have backward() reach them.
+        """
+        if self.grad is None:
+            self.grad = np.zeros_like(self.data)
+        self.grad += grad
+
     @property
     def shape(self) -> tuple[int, ...]:
         return self.data.shape
