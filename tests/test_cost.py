@@ -7,11 +7,14 @@ from evaluation.cost import (
     active_param_count,
     cost_report,
     model_flops,
+    time_dense_vs_compressed_forward,
     total_param_count,
     weight_sparsity,
 )
 from nn import Linear, ReLU, Sequential
-from prune.mask import set_mask
+from prune.compress import compress_model
+from prune.criteria import neuron_magnitude_scores
+from prune.mask import prune_neurons_to_count, set_mask
 from utils.seed import set_seed
 
 set_seed(0)
@@ -111,3 +114,24 @@ def test_dense_matmul_speed_unaffected_by_sparsity():
     # there's no dramatic speedup, not that the ratio is exactly 1.0
     ratio = t_sparse / t_dense
     assert 0.5 < ratio < 2.0, f"expected no speedup from sparsity, got ratio={ratio:.2f}"
+
+
+def test_compressed_forward_is_actually_faster_at_high_structured_sparsity():
+    """Contrast to test_dense_matmul_speed_unaffected_by_sparsity above:
+    that test proves unstructured sparsity gives no speedup. Structured
+    (neuron-level) pruning is different -- once whole neurons are gone,
+    prune.compress's sliced matrices are genuinely smaller, and a normal
+    dense matmul on them measurably does less work. The bound is generous
+    (a noisy microbenchmark, same spirit as the test above) but
+    meaningfully below 1.0, not just "not slower".
+    """
+    mlp = Sequential(Linear(2, 128), ReLU(), Linear(128, 128), ReLU(), Linear(128, 3))
+    for layer in (mlp.layers[0], mlp.layers[2]):
+        prune_neurons_to_count(layer, neuron_magnitude_scores(layer), target_active=32)  # 75% pruned
+
+    compressed = compress_model(mlp)
+    x = np.random.randn(64, 2)
+
+    t_dense, t_compressed = time_dense_vs_compressed_forward(mlp, compressed, x, repeats=300)
+    ratio = t_compressed / t_dense
+    assert ratio < 0.7, f"expected a real speedup from structured sparsity, got ratio={ratio:.2f}"

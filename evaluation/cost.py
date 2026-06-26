@@ -13,6 +13,11 @@ repo (out of scope, see project brief).
 
 from __future__ import annotations
 
+import time
+
+import numpy as np
+
+from engine.tensor import Tensor
 from nn.sequential import Sequential
 
 HONEST_COST_NOTE = (
@@ -66,6 +71,30 @@ def model_flops(model: Sequential, batch_size: int, active_only: bool = False) -
         n_connections = int(layer.mask.data.sum()) if active_only else n_in * n_out
         total += 2 * batch_size * n_connections + batch_size * n_out
     return total
+
+
+def time_dense_vs_compressed_forward(
+    model: Sequential, compressed, x: np.ndarray, repeats: int = 200
+) -> tuple[float, float]:
+    """Real wall-clock time (seconds) for `repeats` forward passes:
+    `model(Tensor(x))` (the existing dense x @ (weight*mask) path) vs.
+    `compressed(x)` (prune.compress's sliced-matrix path, see
+    prune/compress.py). Unlike unstructured masking, the compressed path
+    genuinely does less work -- contrast with
+    test_dense_matmul_speed_unaffected_by_sparsity's no-speedup result.
+    """
+    x_t = Tensor(x)
+    start = time.perf_counter()
+    for _ in range(repeats):
+        model(x_t)
+    t_dense = time.perf_counter() - start
+
+    start = time.perf_counter()
+    for _ in range(repeats):
+        compressed(x)
+    t_compressed = time.perf_counter() - start
+
+    return t_dense, t_compressed
 
 
 def cost_report(model: Sequential, batch_size: int) -> dict:
