@@ -45,6 +45,24 @@ def test_softmax_ce_large_logits_stay_finite():
     assert np.all(np.isfinite(t.grad))
 
 
+def test_column_shaped_labels_are_rejected_not_silently_misindexed():
+    """A label array of shape (N, 1) instead of (N,) is a common, easy
+    mistake (e.g. straight out of a CSV column). NumPy's fancy indexing
+    log_probs[arange(n), labels] does NOT raise for that shape -- it
+    broadcasts arange(n) (shape (n,)) against labels (shape (n,1)) into
+    an (n,n) index pair, silently selecting an n x n block instead of n
+    single entries, and .mean() then quietly averages the wrong thing.
+    Confirmed by direct execution before this guard existed: the same
+    logits with (N,) vs (N,1) labels produced two DIFFERENT scalar
+    losses and two different gradients, with no exception either way.
+    """
+    logits_data = np.random.randn(3, 4)
+    labels_2d = np.array([0, 1, 2]).reshape(3, 1)
+    t = Tensor(logits_data, requires_grad=True)
+    with pytest.raises(AssertionError):
+        softmax_cross_entropy(t, labels_2d)
+
+
 def test_negative_label_is_rejected_not_silently_misindexed():
     """A label of -1 is valid NumPy negative indexing, not an
     out-of-bounds error -- without a range check, fancy-indexing

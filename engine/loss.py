@@ -19,6 +19,18 @@ def softmax_cross_entropy(logits: Tensor, labels: np.ndarray) -> Tensor:
     """
     n, n_classes = logits.shape
     labels = np.asarray(labels)
+    # labels MUST be 1D, shape (n,) -- a common, easy mistake is passing
+    # (n, 1) (e.g. straight out of a CSV column or a one-hot-decode that
+    # forgot to .squeeze()). NumPy's fancy indexing below does NOT raise
+    # for that shape: log_probs[arange(n), labels] with labels.shape ==
+    # (n, 1) broadcasts arange(n) (shape (n,)) against labels (shape
+    # (n, 1)) into an (n, n) index pair, silently selecting an n x n
+    # block instead of n single entries, and .mean() then quietly
+    # averages the wrong object -- a different, wrong loss AND gradient,
+    # confirmed by direct execution, with no exception raised anywhere.
+    # Catching the shape here, before that indexing happens, turns a
+    # silent wrong answer into a loud, immediate error.
+    assert labels.shape == (n,), f"labels must have shape ({n},), got {labels.shape}"
     # fancy-indexing with an out-of-[0, C) label doesn't always raise: a
     # label of -1 is valid NumPy negative indexing and silently selects
     # the LAST class instead of erroring -- a wrong loss/gradient, not a
