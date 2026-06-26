@@ -21,6 +21,7 @@ from evaluation.cost import weight_sparsity
 from nn import Linear, ReLU, Sequential
 from optim import Adam
 from prune import accumulate_gradients, cubic_sparsity, magnitude_scores, prune_to_sparsity, saliency_scores
+from prune.dst import dst_step
 from train.dataset import make_spirals
 from train.loop import train
 from utils.seed import set_seed
@@ -40,6 +41,8 @@ def main(
     criterion: str = "saliency",
     n_per_class: int = 300,
     results_dir: str = RESULTS_DIR,
+    enable_regrowth: bool = False,
+    exchange_fraction: float = 0.1,
 ):
     set_seed(seed)
     X, y = make_spirals(n_per_class=n_per_class, n_classes=3, noise=0.2)
@@ -59,6 +62,27 @@ def main(
 
     def on_step_end(step, model, loss_value):
         if step < prune_start_step or step % prune_every != 0:
+            return
+        if enable_regrowth:
+            # dst_step's ramp phase (step < prune_end_step) reproduces the
+            # else-branch below exactly; past prune_end_step it switches to
+            # grow+drop exchange cycles instead of pure pruning. Always
+            # accumulates real gradients regardless of criterion (simpler,
+            # slightly wasteful for magnitude, deliberate -- magnitude just
+            # ignores the unused .grad it populates).
+            dst_step(
+                model,
+                opt,
+                X,
+                y,
+                batch_size=64,
+                step=step,
+                prune_start_step=prune_start_step,
+                prune_end_step=prune_end_step,
+                final_sparsity=final_sparsity,
+                drop_score_fn=score_fn,
+                exchange_fraction=exchange_fraction,
+            )
             return
         target = cubic_sparsity(step, prune_start_step, prune_end_step, final_sparsity)
         if criterion == "saliency":
