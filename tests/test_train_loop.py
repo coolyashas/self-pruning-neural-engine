@@ -37,3 +37,20 @@ def test_train_loop_stable_no_nan_and_learns():
     preds = np.argmax(mlp(Tensor(X)).data, axis=1)
     accuracy = (preds == y).mean()
     assert accuracy > 0.9
+
+
+def test_on_epoch_end_callback_fires_once_per_epoch():
+    set_seed(0)
+    mlp = Sequential(Linear(2, 4), ReLU(), Linear(4, 3))
+    opt = Adam(mlp.parameters(), lr=0.01)
+    X, y = make_spirals(n_per_class=10, n_classes=3)
+
+    calls = []
+
+    def on_epoch_end(epoch, losses_so_far):
+        calls.append((epoch, len(losses_so_far)))
+
+    train(mlp, opt, X, y, epochs=3, batch_size=8, on_epoch_end=on_epoch_end)
+
+    assert [c[0] for c in calls] == [0, 1, 2]
+    assert calls[0][1] < calls[1][1] < calls[2][1]  # losses list keeps growing
