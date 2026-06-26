@@ -106,6 +106,7 @@ def main(
     axes[2].set(xlabel="step", ylabel="sparsity", title="Achieved sparsity")
     fig.tight_layout()
     fig.savefig(os.path.join(results_dir, "part3_self_pruning.png"))
+    plt.close(fig)  # this gets called dozens of times by the Pareto sweep
 
     print(
         f"final sparsity={history[-1][1]:.4f} loss={history[-1][2]:.4f} accuracy={history[-1][3]:.4f}"

@@ -61,6 +61,7 @@ def main(
     ax2.set(xlabel="epoch", ylabel="accuracy", title="Training accuracy")
     fig.tight_layout()
     fig.savefig(os.path.join(results_dir, "part2_learning_curve.png"))
+    plt.close(fig)  # otherwise repeated calls (e.g. from a sweep) leak figures
 
     print(f"final loss={history[-1][1]:.4f} accuracy={history[-1][2]:.4f}")
     return history
