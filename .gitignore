@@ -20,3 +20,6 @@ htmlcov/
 .idea/
 .DS_Store
 Thumbs.db
+
+CODING_GUIDELINES.md
+Common_pittfall.md
