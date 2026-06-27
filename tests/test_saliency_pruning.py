@@ -101,6 +101,45 @@ def test_accumulate_gradients_matches_true_dataset_mean_with_uneven_final_batch(
     assert np.allclose(mlp.layers[0].weight.grad, true_mean)
 
 
+def test_accumulate_gradients_skips_a_parameter_never_touched_this_sweep():
+    """accumulate_gradients is a generic model helper (takes any model
+    with .parameters()/.__call__()), not hardcoded to this project's
+    fully-connected Sequential MLP, where every parameter happens to
+    get a gradient on every batch. A parameter a future, conditionally-
+    used architecture's forward never touches would leave p.grad as
+    None after backward() -- unconditionally doing `batch_weight *
+    p.grad` would crash with `TypeError: unsupported operand type(s)
+    for *: 'float' and 'NoneType'` instead of deliberately skipping it.
+    Confirmed by direct execution before this guard existed.
+    """
+    from engine.tensor import Tensor as T
+
+    class _ModelWithDisconnectedParam:
+        def __init__(self, real_layer, extra_param):
+            self.real_layer = real_layer
+            self.extra_param = extra_param
+            self.layers = [real_layer]
+
+        def __call__(self, x):
+            return self.real_layer(x)
+
+        def parameters(self):
+            return self.real_layer.parameters() + [self.extra_param]
+
+    real_layer = Linear(2, 3)
+    extra_param = T(np.ones((5, 5)), requires_grad=True)  # never used in the forward path
+    model = _ModelWithDisconnectedParam(real_layer, extra_param)
+
+    X = np.random.randn(10, 2)
+    y = np.random.randint(0, 3, size=10)
+
+    accumulate_gradients(model, X, y, batch_size=4)  # uneven last batch too -- must not crash
+
+    assert extra_param.grad is not None  # zero-initialized total, not left None
+    assert np.array_equal(extra_param.grad, np.zeros((5, 5)))
+    assert real_layer.weight.grad is not None  # the real parameter still got its gradient
+
+
 def test_saliency_and_magnitude_can_disagree():
     """The whole point of having both criteria: a large weight with near-
     zero gradient should rank LOW on saliency despite ranking HIGH on

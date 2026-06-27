@@ -74,6 +74,40 @@ def test_multi_batch_matches_true_dataset_mean_with_uneven_final_batch():
     assert np.allclose(totals[layer0], true_mean)
 
 
+def test_skips_a_parameter_never_touched_this_sweep():
+    """Same generic-helper concern as accumulate_gradients: a parameter
+    a future, conditionally-used architecture's forward never touches
+    would leave p.grad as None after backward() -- unconditionally
+    doing `batch_weight * p.grad` would crash instead of deliberately
+    skipping it.
+    """
+
+    class _ModelWithDisconnectedParam:
+        def __init__(self, real_layer, extra_param):
+            self.real_layer = real_layer
+            self.extra_param = extra_param
+            self.layers = [real_layer]
+
+        def __call__(self, x):
+            return self.real_layer(x)
+
+        def parameters(self):
+            return self.real_layer.parameters() + [self.extra_param]
+
+    real_layer = Linear(2, 3)
+    extra_param = Tensor(np.ones((5, 5)), requires_grad=True)  # never used in the forward path
+    model = _ModelWithDisconnectedParam(real_layer, extra_param)
+
+    X = np.random.randn(10, 2)
+    y = np.random.randint(0, 3, size=10)
+
+    accumulate_dense_gradients(model, X, y, batch_size=4)  # uneven last batch too -- must not crash
+
+    assert extra_param.grad is not None
+    assert np.array_equal(extra_param.grad, np.zeros((5, 5)))
+    assert real_layer.weight.grad is not None
+
+
 def test_returns_every_prunable_layer():
     mlp = Sequential(Linear(2, 4), ReLU(), Linear(4, 3))
     X = np.random.randn(6, 2)

@@ -86,7 +86,16 @@ def accumulate_gradients(model, X: np.ndarray, y: np.ndarray, batch_size: int) -
         softmax_cross_entropy(model(Tensor(X[idx])), y[idx]).backward()
         batch_weight = n_batch / n
         for p, total in zip(params, totals):
-            total += batch_weight * p.grad
+            # p.grad can be None for a parameter this particular batch's
+            # graph never touched (e.g. a conditionally-used branch in a
+            # future, non-fully-connected architecture -- every
+            # parameter in the current Sequential MLP gets a gradient
+            # on every batch, but this is a generic model helper, not
+            # hardcoded to that). Skip deliberately, the same way
+            # optim/adam.py's step() does, instead of crashing on
+            # `float * None`.
+            if p.grad is not None:
+                total += batch_weight * p.grad
     for p, total in zip(params, totals):
         p.grad = total
 
@@ -138,7 +147,11 @@ def accumulate_dense_gradients(model, X: np.ndarray, y: np.ndarray, batch_size: 
         for layer in prunable:
             dense_totals[layer] += batch_weight * layer.w_eff.grad
         for p, total in zip(params, param_totals):
-            total += batch_weight * p.grad
+            # same guard as accumulate_gradients above: skip a parameter
+            # this batch's graph never touched instead of crashing on
+            # `float * None`.
+            if p.grad is not None:
+                total += batch_weight * p.grad
 
     for p, total in zip(params, param_totals):
         p.grad = total
