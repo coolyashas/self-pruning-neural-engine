@@ -113,33 +113,65 @@ def test_matmul_grad():
 @pytest.mark.parametrize(
     "shape_a, shape_b",
     [
-        ((2, 3, 4), (4, 5)),  # batched-looking input (3D), not supported
-        ((3,), (3, 4)),  # vector-matrix, not supported
-        ((3, 4), (4,)),  # matrix-vector, not supported
+        ((6, 5, 3), (6, 3, 4)),  # true batched: matching batch dims
+        ((6, 5, 3), (3, 4)),  # batch broadcast: b has no batch dim at all
+        ((5, 3), (6, 3, 4)),  # batch broadcast: a has no batch dim at all
+        ((6, 5, 3), (1, 3, 4)),  # batch broadcast: explicit singleton batch dim
+        ((1, 5, 3), (6, 3, 4)),  # singleton batch dim on the OTHER operand
+        ((2, 6, 5, 3), (6, 3, 4)),  # higher rank (4D vs 3D) batch broadcast
     ],
 )
-def test_matmul_rejects_non_2d_inputs(shape_a, shape_b):
-    """matmul is a hard 2D-only scope boundary (no batched matmul, no
-    vector-matrix/matrix-vector) -- not a debug-only sanity check, so
-    it must raise a clear error rather than either silently computing
-    something (NumPy's own @ supports all of these) or crashing later,
-    confusingly, inside backward().
+def test_matmul_batched_grad(shape_a, shape_b):
+    """Batched matmul: ndim>=2 on both operands, with NumPy-style batch
+    broadcasting on every axis before the last two (the plain 2D case
+    elsewhere in this file is the zero-batch-dims special case of this
+    same code path, unchanged). Covers true batching (matching batch
+    shapes), one-sided broadcast in both directions, an explicit
+    singleton batch dim on either operand, and a higher-rank (4D vs
+    3D) broadcast -- the backward's _unbroadcast_batch must reduce
+    each operand's gradient back to ITS OWN batch shape, not the
+    broadcast output's, while never touching the last two (matrix)
+    axes.
+    """
+    a = np.random.randn(*shape_a)
+    b = np.random.randn(*shape_b)
+    assert_grad_matches(lambda at, bt: at @ bt, lambda aa, ba: aa @ ba, [a, b])
+
+
+@pytest.mark.parametrize(
+    "shape_a, shape_b",
+    [
+        ((3,), (3, 4)),  # vector-matrix, explicitly out of scope
+        ((3, 4), (4,)),  # matrix-vector, explicitly out of scope
+        ((), (3, 4)),  # scalar operand
+    ],
+)
+def test_matmul_rejects_1d_or_0d_inputs(shape_a, shape_b):
+    """Batched matmul (ndim>=2 on both sides, see test_matmul_batched_grad
+    above) is supported; vector-matrix/matrix-vector (ndim<2 on either
+    side) is a genuinely different operation -- no batch dimension to
+    broadcast, and a different gradient-shape convention -- and stays
+    explicitly out of scope, rejected with a clear error rather than
+    either silently computing something (NumPy's own @ supports all of
+    these) or crashing later, confusingly, inside backward().
     """
     a = Tensor(np.random.randn(*shape_a))
     b = Tensor(np.random.randn(*shape_b))
-    with pytest.raises(ValueError, match="2D"):
+    with pytest.raises(ValueError, match="ndim"):
         a @ b
 
 
-def test_matmul_2d_guard_survives_python_dash_O():
-    """`assert` is stripped entirely under `python -O` -- confirmed by
-    direct execution that this silently re-enables exactly the failure
-    mode described in matmul.py's docstring: a 3D input's forward
-    "succeeds" with no error (NumPy's @ batches it), and backward then
-    either crashes confusingly far from the real cause or, if backward
-    is never called (e.g. inference-only use), never errors at all.
-    Implemented as `if: raise`, not `assert`, specifically so it
-    survives -O -- an in-process pytest.raises check can't tell the
+def test_matmul_ndim_guard_survives_python_dash_O():
+    """`assert` is stripped entirely under `python -O`. Before matmul
+    supported batching, this guard rejected ANY non-2D input; now it
+    specifically rejects ndim<2 (1D/0D) -- still a real failure mode
+    worth guarding loudly, since NumPy's own @ would otherwise either
+    silently do something else entirely for a 1D operand (vector dot
+    product or implicit-dimension matrix-vector, neither of which
+    matches this engine's documented batched-2D-only contract) or,
+    once it reached backward, blow up confusingly far from the actual
+    cause. Implemented as `if: raise`, not `assert`, specifically so
+    it survives -O -- an in-process pytest.raises check can't tell the
     difference, since pytest itself never runs under -O.
     """
     import subprocess
@@ -149,8 +181,8 @@ def test_matmul_2d_guard_survives_python_dash_O():
         "import numpy as np\n"
         "from engine.tensor import Tensor\n"
         "from engine.matmul import matmul\n"
-        "a = Tensor(np.random.randn(2, 3, 4))\n"
-        "b = Tensor(np.random.randn(4, 5))\n"
+        "a = Tensor(np.random.randn(3,))\n"
+        "b = Tensor(np.random.randn(3, 4))\n"
         "matmul(a, b)\n"
     )
     result = subprocess.run(
@@ -287,6 +319,22 @@ def test_requires_grad_false_is_skipped():
     out.backward()
     assert data.grad is None
     assert w.grad is not None
+
+
+def test_requires_grad_false_is_skipped_in_batched_matmul():
+    """Same check as test_requires_grad_false_is_skipped above, but
+    through the batched matmul path (with a batch-broadcast operand)
+    -- the requires_grad gate and the new _unbroadcast_batch reduction
+    are independent pieces of logic, not exercised together by either
+    test alone.
+    """
+    data = Tensor(np.random.randn(6, 5, 3), requires_grad=False)
+    w = Tensor(np.random.randn(3, 2), requires_grad=True)  # no batch dim: broadcasts
+    out = (data @ w).sum()
+    out.backward()
+    assert data.grad is None
+    assert w.grad is not None
+    assert w.grad.shape == w.shape
 
 
 def test_backward_accumulates_across_calls():
