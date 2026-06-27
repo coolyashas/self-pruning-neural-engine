@@ -46,6 +46,18 @@ def test_train_raises_on_non_finite_loss_instead_of_continuing():
     """Training must halt the moment it diverges, not keep computing
     updates from a NaN/inf loss. Forced by setting one weight to inf
     before the very first forward pass.
+
+    That forced inf deliberately makes softmax_cross_entropy compute
+    inf - inf during max-subtraction (engine/loss.py), which NumPy
+    correctly flags with a RuntimeWarning ("invalid value encountered
+    in subtract") -- a true, expected fact about this synthetic,
+    intentionally-pathological input, not a bug to suppress. Asserting
+    it explicitly via pytest.warns (rather than letting it leak to the
+    test run's output unacknowledged, or swallowing it globally inside
+    the production loss function where it might matter for a real,
+    non-deliberately-broken NaN) documents that this specific warning
+    is expected here, and would fail loudly if some unrelated change
+    ever made it stop appearing.
     """
     set_seed(0)
     X, y = make_spirals(n_per_class=10, n_classes=3)
@@ -53,8 +65,9 @@ def test_train_raises_on_non_finite_loss_instead_of_continuing():
     mlp.layers[0].weight.data[0, 0] = np.inf
     opt = Adam(mlp.parameters(), lr=0.01)
 
-    with pytest.raises(FloatingPointError):
-        train(mlp, opt, X, y, epochs=1, batch_size=8)
+    with pytest.warns(RuntimeWarning, match="invalid value encountered in subtract"):
+        with pytest.raises(FloatingPointError):
+            train(mlp, opt, X, y, epochs=1, batch_size=8)
 
 
 def test_non_finite_loss_guard_survives_python_dash_O():
