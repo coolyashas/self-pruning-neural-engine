@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -18,14 +20,55 @@ def test_top_k_keep_mask_rejects_nan_scores():
     guarding it once here protects all of them.
     """
     scores = np.array([1.0, np.nan, 3.0, 2.0])
-    with pytest.raises(AssertionError):
+    with pytest.raises(ValueError):
         _top_k_keep_mask(scores, n_keep=2)
 
 
 def test_keep_mask_from_scores_surfaces_the_nan_guard_through_the_public_api():
     scores = np.array([[1.0, np.nan], [3.0, 2.0]])
-    with pytest.raises(AssertionError):
+    with pytest.raises(ValueError):
         keep_mask_from_scores(scores, sparsity=0.5)
+
+
+def test_set_mask_rejects_a_shape_mismatched_mask():
+    layer = Linear(4, 3)
+    with pytest.raises(ValueError):
+        set_mask(layer, np.ones((3, 4)))  # transposed shape, easy mistake
+
+
+def test_nan_guard_and_set_mask_shape_guard_survive_python_dash_O():
+    """Both guards exist specifically to prevent a SILENT wrong answer
+    (a NaN score ranked as highest by argsort; a shape-mismatched mask
+    silently broadcasting into garbage). `assert` is stripped entirely
+    under `python -O`, which would silently re-enable both failure
+    modes -- that's why both are implemented as `if: raise`, not
+    `assert`. An in-process pytest.raises check can't distinguish the
+    two (pytest never runs under -O itself), so this spawns a real
+    subprocess with -O to confirm both still raise there.
+    """
+    import subprocess
+    import sys
+
+    nan_code = (
+        "import numpy as np\n"
+        "from prune.mask import _top_k_keep_mask\n"
+        "_top_k_keep_mask(np.array([1.0, np.nan, 3.0, 2.0]), n_keep=2)\n"
+    )
+    shape_code = (
+        "import numpy as np\n"
+        "from nn.linear import Linear\n"
+        "from prune.mask import set_mask\n"
+        "set_mask(Linear(4, 3), np.ones((3, 4)))\n"
+    )
+    for code in (nan_code, shape_code):
+        result = subprocess.run(
+            [sys.executable, "-O", "-c", code],
+            cwd=str(Path(__file__).resolve().parent.parent),
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode != 0, "expected a ValueError under -O, but the call succeeded silently"
+        assert "ValueError" in result.stderr
 
 
 def test_default_mask_is_all_ones_and_excluded_from_parameters():

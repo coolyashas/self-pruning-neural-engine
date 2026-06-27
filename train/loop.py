@@ -32,7 +32,14 @@ def train(
             idx = perm[start : start + batch_size]
             optimizer.zero_grad()
             loss = softmax_cross_entropy(model(Tensor(X[idx])), y[idx])
-            assert np.isfinite(loss.data), f"non-finite loss: {loss.data}"
+            # plain `if: raise`, not `assert` -- this is meant to halt
+            # training the moment it diverges, which must hold even
+            # under `python -O` (which strips asserts entirely; a
+            # silently-stripped check here would let training continue
+            # computing garbage updates from a NaN/inf loss instead of
+            # stopping immediately).
+            if not np.isfinite(loss.data):
+                raise FloatingPointError(f"non-finite loss: {loss.data}")
             loss.backward()
             optimizer.step()
             losses.append(float(loss.data))

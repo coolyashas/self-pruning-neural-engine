@@ -38,7 +38,12 @@ def set_mask(layer: Linear, keep: np.ndarray) -> None:
     "the mask defines the active network" are both wrong without anyone
     having touched bias.data directly.
     """
-    assert keep.shape == layer.weight.shape, (keep.shape, layer.weight.shape)
+    # plain `if: raise`, not `assert` -- `python -O` strips asserts
+    # entirely, which would silently re-enable whatever a shape mismatch
+    # was about to do (broadcast into something wrong, or a confusing
+    # downstream NumPy error far from this function).
+    if keep.shape != layer.weight.shape:
+        raise ValueError(f"keep.shape {keep.shape} != layer.weight.shape {layer.weight.shape}")
     new_column_alive = keep.astype(bool).any(axis=0)
     # bias_mask already mirrors the OLD mask's column_alive state here,
     # since this function is the only place either array is written.
@@ -67,7 +72,14 @@ def _top_k_keep_mask(scores: np.ndarray, n_keep: int) -> np.ndarray:
     but failing loudly here is cheap insurance against a much harder to
     diagnose silent failure several layers downstream.
     """
-    assert not np.isnan(scores).any(), "NaN score would be silently treated as highest-ranked by argsort"
+    # plain `if: raise`, not `assert` -- this guard exists specifically
+    # to prevent a SILENT wrong answer (NaN treated as highest-ranked);
+    # `python -O` strips asserts entirely, which would silently
+    # re-enable exactly that failure mode. Confirmed by running this
+    # function under -O before this fix: a NaN score passed straight
+    # through with no error.
+    if np.isnan(scores).any():
+        raise ValueError("NaN score would be silently treated as highest-ranked by argsort")
     flat_keep = np.zeros(scores.size, dtype=bool)
     if n_keep > 0:
         top_indices = np.argsort(scores.ravel())[scores.size - n_keep :]

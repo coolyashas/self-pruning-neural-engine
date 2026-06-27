@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -59,7 +61,7 @@ def test_column_shaped_labels_are_rejected_not_silently_misindexed():
     logits_data = np.random.randn(3, 4)
     labels_2d = np.array([0, 1, 2]).reshape(3, 1)
     t = Tensor(logits_data, requires_grad=True)
-    with pytest.raises(AssertionError):
+    with pytest.raises(ValueError):
         softmax_cross_entropy(t, labels_2d)
 
 
@@ -72,15 +74,62 @@ def test_negative_label_is_rejected_not_silently_misindexed():
     """
     logits = Tensor(np.random.randn(3, 4), requires_grad=True)
     labels = np.array([0, -1, 2])
-    with pytest.raises(AssertionError):
+    with pytest.raises(ValueError):
         softmax_cross_entropy(logits, labels)
 
 
 def test_out_of_range_label_is_rejected():
     logits = Tensor(np.random.randn(3, 4), requires_grad=True)
     labels = np.array([0, 4, 2])  # 4 is out of range for 4 classes (valid: 0-3)
-    with pytest.raises(AssertionError):
+    with pytest.raises(ValueError):
         softmax_cross_entropy(logits, labels)
+
+
+def test_float_labels_are_rejected_with_a_clear_message_not_a_raw_indexerror():
+    """A float label array like np.array([0.0, 1.0, 2.0]) gets past
+    shape and range checks (both are dtype-agnostic comparisons) and
+    would otherwise die inside log_probs[arange(n), labels] with
+    NumPy's own raw "arrays used as indices must be of integer (or
+    boolean) type" -- not numerically wrong, but a leaky API boundary
+    that should fail with a message about THIS function's contract,
+    not a downstream NumPy implementation detail.
+    """
+    logits = Tensor(np.random.randn(3, 4), requires_grad=True)
+    labels = np.array([0.0, 1.0, 2.0])
+    with pytest.raises(ValueError, match="integer"):
+        softmax_cross_entropy(logits, labels)
+
+
+def test_label_validation_guards_survive_python_dash_O():
+    """The actual claim isn't "this raises ValueError" (the tests above
+    already cover that) -- it's that the guard SURVIVES `python -O`,
+    which strips every `assert` statement from the running process
+    entirely. An in-process pytest.raises check can't tell the
+    difference between `assert` and `if: raise`, since pytest itself
+    never runs under -O. This spawns a real subprocess with -O and
+    confirms the (3,1)-shaped-labels case still raises there -- before
+    these guards were converted from `assert` to `if: raise`, this
+    exact repro silently produced a finite, wrong loss under -O instead.
+    """
+    import subprocess
+    import sys
+
+    code = (
+        "import numpy as np\n"
+        "from engine.tensor import Tensor\n"
+        "from engine.loss import softmax_cross_entropy\n"
+        "logits = Tensor(np.random.randn(3, 4), requires_grad=True)\n"
+        "labels = np.array([0, 1, 2]).reshape(3, 1)\n"
+        "softmax_cross_entropy(logits, labels)\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-O", "-c", code],
+        cwd=str(Path(__file__).resolve().parent.parent),
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0, "expected a ValueError under -O, but the call succeeded silently"
+    assert "ValueError" in result.stderr
 
 
 def test_full_pipeline_matmul_bias_broadcast_softmax_ce():
