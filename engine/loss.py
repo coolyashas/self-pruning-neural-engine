@@ -57,6 +57,14 @@ def softmax_cross_entropy(logits: Tensor, labels: np.ndarray) -> Tensor:
     if not np.all((labels >= 0) & (labels < n_classes)):
         raise ValueError(f"labels must be in [0, {n_classes}), got min={labels.min()}, max={labels.max()}")
 
+    # A non-finite logit row is already a diverged model state. Letting
+    # it flow into max-subtraction computes inf - inf or nan - nan,
+    # which only produces a downstream RuntimeWarning before the loss
+    # eventually becomes non-finite. Failing here turns that into one
+    # direct, deterministic error at the actual boundary.
+    if not np.all(np.isfinite(logits.data)):
+        raise FloatingPointError("softmax_cross_entropy received non-finite logits")
+
     # subtract the row max before exp(): shifts every row by a constant,
     # which softmax is invariant to, but keeps exp() from overflowing.
     shifted = logits.data - logits.data.max(axis=1, keepdims=True)

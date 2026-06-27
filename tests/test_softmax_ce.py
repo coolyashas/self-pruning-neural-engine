@@ -47,6 +47,13 @@ def test_softmax_ce_large_logits_stay_finite():
     assert np.all(np.isfinite(t.grad))
 
 
+def test_non_finite_logits_are_rejected_before_numpy_emits_runtime_warnings():
+    logits = Tensor([[np.inf, 0.0, 1.0], [0.0, 2.0, 3.0]], requires_grad=True)
+    labels = np.array([0, 1])
+    with pytest.raises(FloatingPointError, match="non-finite logits"):
+        softmax_cross_entropy(logits, labels)
+
+
 def test_column_shaped_labels_are_rejected_not_silently_misindexed():
     """A label array of shape (N, 1) instead of (N,) is a common, easy
     mistake (e.g. straight out of a CSV column). NumPy's fancy indexing
