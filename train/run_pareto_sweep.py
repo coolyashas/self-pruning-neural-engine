@@ -23,12 +23,12 @@ RESULTS_DIR = os.path.join(os.path.dirname(__file__), "..", "results")
 
 def run_sweep(
     criteria=("magnitude", "saliency"),
-    sparsities=(0.0, 0.5, 0.7, 0.85, 0.9, 0.95),
-    seeds=(0, 1, 2, 3, 4),
-    epochs=200,
+    sparsities=(0.0, 0.5, 0.75, 0.9, 0.95),
+    seeds=(0, 1, 2),
+    epochs=100,
     n_per_class=300,
     batch_size=32,
-    lr=0.01,
+    lr=1e-3,
     prune_start_step=400,
     prune_every=20,
 ) -> list[dict]:

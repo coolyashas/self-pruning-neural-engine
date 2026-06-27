@@ -27,7 +27,7 @@ def main(
     seed: int = 0,
     epochs: int = 200,
     batch_size: int = 32,
-    lr: float = 0.01,
+    lr: float = 1e-3,
     n_per_class: int = 300,
     results_dir: str = RESULTS_DIR,
 ) -> list[tuple[int, float, float]]:
@@ -45,7 +45,7 @@ def main(
         accuracy = float((preds == y).mean())
         history.append((epoch, mean_loss, accuracy))
 
-    train(mlp, opt, X, y, epochs=epochs, batch_size=batch_size, on_epoch_end=on_epoch_end)
+    train(mlp, opt, X, y, epochs=epochs, batch_size=batch_size, on_epoch_end=on_epoch_end, grad_clip=1.0)
 
     os.makedirs(results_dir, exist_ok=True)
     with open(os.path.join(results_dir, "part2_learning_curve.csv"), "w", newline="") as f:

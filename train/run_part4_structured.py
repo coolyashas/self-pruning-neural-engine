@@ -41,7 +41,7 @@ def main(
     seed: int = 0,
     epochs: int = 300,
     batch_size: int = 32,
-    lr: float = 0.01,
+    lr: float = 1e-3,
     final_sparsity: float = 0.7,
     prune_start_step: int = 400,
     prune_end_frac: float = 0.8,
@@ -102,6 +102,7 @@ def main(
         batch_size=batch_size,
         on_epoch_end=on_epoch_end,
         on_step_end=on_step_end,
+        grad_clip=1.0,
     )
 
     # in-script sanity check on top of test_compress.py's dedicated suite:
