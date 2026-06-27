@@ -49,7 +49,20 @@ class Tensor:
         MLP depths).
         """
         if grad is None:
-            assert self.data.size == 1, "backward() with no grad arg needs a scalar output"
+            # Hard API contract, not a debug-only sanity check: the
+            # no-arg form is only meaningful for a scalar root (e.g. a
+            # loss). `assert` would be wrong here -- `python -O` strips
+            # it entirely, confirmed by direct execution: under -O,
+            # calling backward() on a non-scalar Tensor silently seeds
+            # every element's grad as 1.0 (equivalent to having called
+            # .sum().backward() without anyone asking for that), instead
+            # of raising. That's a silent change in what's being
+            # differentiated, not a crash -- exactly the failure mode
+            # this check exists to prevent.
+            if self.data.size != 1:
+                raise ValueError(
+                    f"backward() with no grad arg needs a scalar output, got shape {self.data.shape}"
+                )
             grad = np.ones_like(self.data)
         self.accumulate_grad(np.asarray(grad, dtype=np.float64))
 

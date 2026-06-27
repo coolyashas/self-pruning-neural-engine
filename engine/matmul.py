@@ -7,7 +7,26 @@ from engine.tensor import Tensor
 
 def matmul(a: Tensor, b: Tensor) -> Tensor:
     # O(N*D*H) forward and backward, same as the matmul itself.
-    assert a.data.ndim == 2 and b.data.ndim == 2, "matmul only supports 2D tensors"
+    #
+    # This is a hard SCOPE boundary, not a debug-only sanity check: no
+    # batched matmul, no vector-matrix/matrix-vector, no >2D inputs --
+    # `assert` would be wrong here because `python -O` strips it
+    # entirely, and the failure mode it's protecting against isn't a
+    # clean crash, it's worse. Confirmed by direct execution: NumPy's
+    # `@` happily computes batched matmul for 3D inputs (forward
+    # "succeeds", silently, with no error at all if backward is never
+    # called -- e.g. an inference-only use). If backward IS called, the
+    # `.T` below means something different for ndim>2 (reverses ALL
+    # axes, not just the last two), so backward then crashes with a
+    # confusing low-level NumPy shape-mismatch error far from the real
+    # problem, instead of a clear message about this engine's own
+    # documented contract. Raising loudly and immediately, before any
+    # of that, is strictly better than either failure mode.
+    if a.data.ndim != 2 or b.data.ndim != 2:
+        raise ValueError(
+            f"matmul only supports 2D tensors (no batched matmul, no vector-matrix/"
+            f"matrix-vector), got shapes {a.data.shape} and {b.data.shape}"
+        )
     out = Tensor(a.data @ b.data, a.requires_grad or b.requires_grad, (a, b), "matmul")
 
     def _backward():
