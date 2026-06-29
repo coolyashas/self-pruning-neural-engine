@@ -64,12 +64,8 @@ def main(
         if step < prune_start_step or step % prune_every != 0:
             return
         if enable_regrowth:
-            # dst_step's ramp phase (step < prune_end_step) reproduces the
-            # else-branch below exactly; past prune_end_step it switches to
-            # grow+drop exchange cycles instead of pure pruning. Always
-            # accumulates real gradients regardless of criterion (simpler,
-            # slightly wasteful for magnitude, deliberate -- magnitude just
-            # ignores the unused .grad it populates).
+            # dst_step's ramp phase mirrors the else-branch below; past
+            # prune_end_step it switches to grow+drop exchange cycles.
             dst_step(
                 model,
                 opt,
@@ -89,9 +85,8 @@ def main(
             accumulate_gradients(model, X, y, batch_size=64)
         for layer in prunable_layers:
             prune_to_sparsity(layer, score_fn(layer), target)
-        # the next mini-batch's optimizer.zero_grad() (inside train()) will
-        # clear the saliency sweep's leftover .grad before it's used for a
-        # real update -- nothing to do here, but worth knowing why it's safe.
+        # the next step's optimizer.zero_grad() clears the saliency sweep's
+        # leftover .grad before any real update -- safe, nothing to do here.
 
     history: list[tuple[int, float, float, float]] = []  # (step, sparsity, mean_loss, accuracy)
 

@@ -9,11 +9,9 @@ from engine.tensor import Tensor
 
 
 def _clip_grad_norm(parameters, max_norm: float) -> None:
-    """Scale all gradients in place so their combined global L2 norm is at
-    most `max_norm`. Caps the rare oversized gradient that Adam would
-    otherwise amplify into a loss spike, without changing the update
-    direction. Parameters not touched by backward() (grad is None) are
-    skipped.
+    """Scale all gradients in place so their global L2 norm is at most
+    `max_norm`, capping the rare spike without changing direction. Parameters
+    with grad None (untouched by backward()) are skipped.
     """
     grads = [p.grad for p in parameters if p.grad is not None]
     if not grads:
@@ -53,12 +51,8 @@ def train(
             idx = perm[start : start + batch_size]
             optimizer.zero_grad()
             loss = softmax_cross_entropy(model(Tensor(X[idx])), y[idx])
-            # plain `if: raise`, not `assert` -- this is meant to halt
-            # training the moment it diverges, which must hold even
-            # under `python -O` (which strips asserts entirely; a
-            # silently-stripped check here would let training continue
-            # computing garbage updates from a NaN/inf loss instead of
-            # stopping immediately).
+            # `if: raise` not `assert`, so divergence halts training even
+            # under `-O` instead of computing garbage from a NaN/inf loss.
             if not np.isfinite(loss.data):
                 raise FloatingPointError(f"non-finite loss: {loss.data}")
             loss.backward()

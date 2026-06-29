@@ -6,9 +6,7 @@ from train.run_pareto_sweep import main, run_sweep, summarize
 
 
 def _tiny_sweep_kwargs():
-    # deliberately tiny: 2 criteria x 2 sparsities x 2 seeds = 8 runs,
-    # each a handful of epochs on a small dataset -- fast for CI, not
-    # meant to demonstrate real Pareto behavior (that's the real sweep).
+    # tiny: 2 criteria x 2 sparsities x 2 seeds = 8 runs, fast for CI
     return dict(
         criteria=("magnitude", "saliency"),
         sparsities=(0.0, 0.5),

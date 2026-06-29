@@ -8,9 +8,8 @@ import numpy as np
 class Tensor:
     """A node in the computation graph: data, grad, and links to parents.
 
-    `_prev` holds the Tensors this one was built from, `_backward` is the
+    `_prev` holds the Tensors this one was built from; `_backward` is the
     closure (set by an op) that pushes grad from this node to those parents.
-    backward() itself — the traversal that calls these in order — is later.
     """
 
     def __init__(
@@ -23,13 +22,12 @@ class Tensor:
         # float64: finite-difference gradcheck needs the precision headroom.
         self.data: np.ndarray = np.asarray(data, dtype=np.float64)
         self.requires_grad = requires_grad
-        self.grad: np.ndarray | None = None  # allocated lazily, see below
+        self.grad: np.ndarray | None = None  # allocated lazily
 
-        # set, not tuple: a parent can show up twice in one op (x + x), and
-        # we only want one graph edge for it.
+        # set, not tuple: dedupes a parent that appears twice in one op (x + x).
         self._prev: set["Tensor"] = set(_children)
         self._backward = lambda: None  # no-op for leaves; ops overwrite this
-        self._op = _op  # debug label only, e.g. "add"
+        self._op = _op  # debug label only
 
     def accumulate_grad(self, grad: np.ndarray) -> None:
         """grad += grad, never overwrite — a tensor can feed multiple ops."""
@@ -40,25 +38,15 @@ class Tensor:
     def backward(self, grad: np.ndarray | None = None) -> None:
         """Run reverse-mode autodiff back through the graph from this node.
 
-        No-arg form requires a scalar (e.g. a loss) and seeds grad=1.
-        Builds a topo order by DFS (parents before the node they produced),
-        then walks it in reverse so every node's _backward() only fires
-        once all of its consumers have already accumulated into its grad.
-        O(V+E) in graph size; DFS is recursive, so pathologically deep
-        graphs could hit Python's recursion limit (not a concern at our
-        MLP depths).
+        No-arg form requires a scalar (e.g. a loss) and seeds grad=1. Builds a
+        topo order by DFS (parents before children), then walks it in reverse
+        so each node's _backward() fires only after all its consumers have
+        accumulated into its grad. O(V+E) in graph size.
         """
         if grad is None:
-            # Hard API contract, not a debug-only sanity check: the
-            # no-arg form is only meaningful for a scalar root (e.g. a
-            # loss). `assert` would be wrong here -- `python -O` strips
-            # it entirely, confirmed by direct execution: under -O,
-            # calling backward() on a non-scalar Tensor silently seeds
-            # every element's grad as 1.0 (equivalent to having called
-            # .sum().backward() without anyone asking for that), instead
-            # of raising. That's a silent change in what's being
-            # differentiated, not a crash -- exactly the failure mode
-            # this check exists to prevent.
+            # Hard API contract (not an assert, which `python -O` would strip):
+            # the no-arg form is only meaningful for a scalar root. Without this,
+            # backward() on a non-scalar would silently seed every grad as 1.0.
             if self.data.size != 1:
                 raise ValueError(
                     f"backward() with no grad arg needs a scalar output, got shape {self.data.shape}"

@@ -1,10 +1,8 @@
 """Linear (affine) layer: y = x @ (W * mask) + b, with He init for ReLU.
 
-The mask is always part of the forward graph (all-ones until something
-prunes it), not a separate masked/unmasked code path -- so dense and
-pruned training run through the exact same forward. dL/dW for a masked
-entry comes out exactly 0 because mul()'s existing backward multiplies the
-upstream gradient by the mask -- nothing here special-cases it.
+The mask is always part of the forward graph (all-ones until pruned), so
+dense and pruned training share one forward path. dL/dW for a masked entry
+is exactly 0 because mul()'s backward multiplies grad by the mask.
 """
 
 from __future__ import annotations
@@ -16,34 +14,24 @@ from engine.tensor import Tensor
 
 class Linear:
     def __init__(self, in_features: int, out_features: int) -> None:
-        # He init: std = sqrt(2/fan_in). ReLU zeros about half its inputs,
-        # so it halves variance going forward; the extra factor of 2 here
-        # (vs. Xavier's sqrt(1/fan_in)) cancels that out and keeps
-        # activation variance roughly constant across layers.
+        # He init: std = sqrt(2/fan_in), the factor of 2 compensating for
+        # ReLU halving activation variance going forward.
         std = np.sqrt(2.0 / in_features)
         self.weight = Tensor(np.random.randn(in_features, out_features) * std, requires_grad=True)
         self.bias = Tensor(np.zeros(out_features), requires_grad=True)
-        # requires_grad=False: a constant from autodiff's view, like any
-        # other non-trainable input. Only weights get pruned, not bias --
-        # standard practice; bias isn't a "connection" to remove.
+        # Only weights are pruned (bias isn't a "connection"); mask is a
+        # non-trainable constant from autodiff's view.
         self.mask = Tensor(np.ones_like(self.weight.data), requires_grad=False)
-        # bias_mask tracks "does this output neuron still have any active
-        # weight" (kept in sync by prune.mask.set_mask). Needed so Adam can
-        # freeze a structurally-dead neuron's bias too: once every incoming
-        # weight is pruned, bias has nothing masking its OWN forward
-        # contribution (z = bias alone), so without this its momentum keeps
-        # nudging it away from the 0 it was reset to -- the same
-        # zero-gradient-isn't-frozen-state lesson as mask-aware Adam,
-        # just for bias instead of weight.
+        # bias_mask tracks whether an output neuron still has any active weight
+        # (synced by prune.mask.set_mask). Lets Adam freeze a structurally-dead
+        # neuron's bias too -- otherwise its momentum keeps nudging the bias
+        # since nothing masks bias's own forward contribution (z = bias alone).
         self.bias_mask = Tensor(np.ones(out_features), requires_grad=False)
 
     def __call__(self, x: Tensor) -> Tensor:
-        # stored on self (not just a local) so external code can read
-        # w_eff.grad after backward() -- it's the gradient one step before
-        # mul()'s masking is applied, i.e. the dense/unmasked signal "how
-        # much would loss change if this connection were fully active",
-        # unlike weight.grad which is always exactly 0 at a masked entry.
-        # Used by prune/criteria.py's regrowth scoring.
+        # Stored on self so prune/criteria.py can read w_eff.grad after
+        # backward(): the dense/unmasked signal "how much would loss change if
+        # this connection were active", unlike weight.grad (always 0 if masked).
         self.w_eff = self.weight * self.mask
         return x @ self.w_eff + self.bias
 

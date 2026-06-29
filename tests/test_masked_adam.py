@@ -1,9 +1,6 @@
-"""The single most important test in this repo: proves mask-aware Adam is
-correct. A masked weight's gradient is exactly 0 (falls out of w*mask, see
-test_mask.py), its Adam moments m/v are frozen -- not just decaying --
-while masked, and a revived weight starts from a clean moment state
-rather than inheriting stale momentum that would otherwise cause an
-oversized or wrong-direction first step.
+"""Proves mask-aware Adam is correct: a masked weight's gradient is exactly 0,
+its m/v moments are frozen (not just decaying) while masked, and a revived
+weight starts from a clean moment state rather than stale momentum.
 """
 
 import numpy as np
@@ -32,9 +29,8 @@ def test_masked_weight_stays_exactly_zero_across_many_steps():
 
 
 def test_masked_weight_frozen_at_arbitrary_nonzero_value():
-    """Pitfalls doc #8: masking must not force the value to 0, just freeze
-    whatever it already was. Nonzero start rules out an implementation
-    that secretly zeroes masked weights instead of gating them.
+    """Masking must freeze the value, not force it to 0. A nonzero start rules
+    out an implementation that secretly zeroes masked weights.
     """
     p = Tensor(np.array([7.5]), requires_grad=True)
     mask = Tensor(np.array([0.0]), requires_grad=False)
@@ -46,8 +42,8 @@ def test_masked_weight_frozen_at_arbitrary_nonzero_value():
 
 
 def test_masked_moments_do_not_drift():
-    """Not just 'no NaN': m and v must stay bitwise unchanged while
-    masked, not slowly decay toward zero via the EMA recursion.
+    """m and v must stay bitwise unchanged while masked, not decay toward
+    zero via the EMA recursion.
     """
     p = Tensor(np.array([1.0, 2.0]), requires_grad=True)
     mask = Tensor(np.array([1.0, 1.0]), requires_grad=False)
@@ -102,10 +98,8 @@ def test_revived_weight_starts_from_clean_moment_state():
 
 
 def test_without_reset_state_revival_inherits_stale_momentum():
-    """The bug being guarded against: skipping reset_state on revival lets
-    old momentum leak into the first post-revival step, producing a
-    DIFFERENT update than the clean-state version gets for the identical
-    scenario.
+    """Skipping reset_state on revival lets old momentum leak into the first
+    post-revival step, producing a different update than the clean-state case.
     """
 
     def run(reset: bool):
@@ -131,15 +125,10 @@ def test_without_reset_state_revival_inherits_stale_momentum():
 
 
 def test_structurally_dead_neurons_bias_stays_exactly_zero_under_continued_training():
-    """Regression for a real bug found running an actual Part-4 training
-    script, not a synthetic case: bias has no mask of its own degrading
-    its weight column -- a structurally-pruned neuron's bias kept
-    drifting via stale Adam momentum even after its weight was correctly
-    frozen, so the dense forward still emitted ReLU(0 + bias) for a
-    "dead" neuron instead of exactly 0 (which prune/compress.py's
-    compress_model silently assumed). bias_mask (nn/linear.py, synced by
-    prune.mask.set_mask) closes this the same way mask-aware Adam already
-    closes it for weight.
+    """Regression: a structurally-pruned neuron's bias kept drifting via stale
+    Adam momentum after its weight was frozen, so the dense forward emitted
+    ReLU(0 + bias) instead of 0 (which compress_model assumes). bias_mask
+    closes this the same way mask-aware Adam closes it for weight.
     """
     from prune.criteria import neuron_magnitude_scores
     from prune.mask import prune_neurons_to_count
@@ -170,8 +159,8 @@ def test_structurally_dead_neurons_bias_stays_exactly_zero_under_continued_train
 
 
 def test_masked_adam_end_to_end_with_real_backward():
-    """Combines masking (commit 16) with mask-aware Adam (commit 17)
-    through a real Linear layer and real backward(), not hand-set grads.
+    """Masking + mask-aware Adam through a real Linear layer and real
+    backward(), not hand-set grads.
     """
     layer = Linear(4, 3)
     keep = np.ones((4, 3))
@@ -193,24 +182,12 @@ def test_masked_adam_end_to_end_with_real_backward():
 
 
 def test_revival_first_update_is_oversized_not_conservative_at_realistic_t():
-    """Pins a finding from the staff review: an earlier version of
-    DESIGN.md's "shared step counter" trade-off note claimed revival at
-    a stale, large `t` gives "almost no bias-correction boost" --
-    implying a conservative, under-sized first update. Measuring it
-    directly shows the opposite. beta1=0.9's bias-correction factor
-    saturates almost immediately (no boost by t~50), but beta2=0.999's
-    saturates roughly 10x slower -- so at a stale large t, m_hat gets no
-    boost while v_hat is STILL under-corrected (too small), and since
-    v_hat sits under a sqrt in the update's denominator, an
-    under-corrected v_hat makes the update LARGER, not smaller. At the
-    t values this project's real runs actually reach (hundreds to
-    thousands of steps), a revived connection's first update is ~2-3x
-    OVERSIZED relative to a true fresh Adam step, not conservative.
-    This doesn't violate correctness (m/v are still exactly 0 right
-    after reset -- see the tests above) -- it's a real, bounded,
-    explainable property of using one shared `t`, and the direction
-    matters for anyone reasoning about training stability after
-    revival.
+    """At a stale large `t`, m_hat (beta1=0.9) is fully bias-corrected but
+    v_hat (beta2=0.999) is still under-corrected (too small); since v_hat sits
+    under a sqrt in the denominator, the first post-revival update is LARGER,
+    not smaller -- ~2-3x oversized at the t values real runs reach. Correctness
+    still holds (m/v are exactly 0 after reset); this is a bounded property of
+    the shared `t`, and the direction matters for stability reasoning.
     """
     beta1, beta2, eps, lr, g = 0.9, 0.999, 1e-8, 0.01, 1.0
 
@@ -219,9 +196,8 @@ def test_revival_first_update_is_oversized_not_conservative_at_realistic_t():
         v_hat = ((1 - beta2) * g**2) / (1 - beta2**t)
         return (lr * m_hat / (np.sqrt(v_hat) + eps)) / lr
 
-    assert first_update_ratio(1) == pytest.approx(1.0, abs=1e-3)  # true fresh step: ~1x
-    # at the large, stale t values this project's real runs reach, the
-    # ratio is well above 1x, not "almost no boost" (~1x or below):
+    assert first_update_ratio(1) == pytest.approx(1.0, abs=1e-3)  # fresh step: ~1x
+    # at large stale t, the ratio is well above 1x:
     assert first_update_ratio(2000) > 2.5
     assert first_update_ratio(20000) > 3.0
     # and it asymptotes to the closed form (1-beta1)/sqrt(1-beta2):

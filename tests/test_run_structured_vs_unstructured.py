@@ -6,8 +6,7 @@ from train.run_structured_vs_unstructured import main, run_sweep, summarize
 
 
 def _tiny_sweep_kwargs():
-    # deliberately tiny: 2 sparsities x 2 seeds x 2 methods = 8 runs, fast
-    # for CI -- not meant to demonstrate the real comparison.
+    # tiny: 2 sparsities x 2 seeds x 2 methods = 8 runs, fast for CI
     return dict(
         sparsities=(0.0, 0.5),
         seeds=(0, 1),

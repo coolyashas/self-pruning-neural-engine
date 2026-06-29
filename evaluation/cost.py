@@ -1,14 +1,10 @@
-"""Active-parameter and FLOP counting -- and the honest limit of what that
-number means.
+"""Active-parameter and FLOP counting -- and the honest limit of that number.
 
-These counts are what a SPARSE kernel could theoretically achieve. Our
-actual forward pass computes x @ (weight * mask): a dense matmul where
-masked entries are multiplied by zero, not skipped. A multiply-by-zero is
-still a multiply, so wall-clock time does NOT improve with sparsity here
--- see test_dense_matmul_speed_unaffected_by_sparsity for a measured
-proof, not just this claim. A real speedup needs a sparse matmul kernel or
-structured (e.g. block/channel) sparsity, neither of which exists in this
-repo (out of scope, see project brief).
+These counts are what a SPARSE kernel could theoretically achieve. Our actual
+forward pass computes x @ (weight * mask): a dense matmul where masked entries
+are multiplied by zero, not skipped, so wall-clock time does NOT improve with
+sparsity (see test_dense_matmul_speed_unaffected_by_sparsity). A real speedup
+needs a sparse kernel or structured sparsity, neither of which exists here.
 """
 
 from __future__ import annotations
@@ -36,8 +32,8 @@ def _prunable_layers(model: Sequential):
 
 
 def weight_sparsity(model: Sequential) -> float:
-    """Fraction of weight connections masked off -- matches prune/'s own
-    definition exactly (bias excluded, same as the schedule targets).
+    """Fraction of weight connections masked off (bias excluded, matching
+    prune/'s definition and the schedule targets).
     """
     layers = _prunable_layers(model)
     active = sum(int(l.mask.data.sum()) for l in layers)
@@ -58,14 +54,11 @@ def total_param_count(model: Sequential) -> int:
 
 
 def model_flops(model: Sequential, batch_size: int, active_only: bool = False) -> int:
-    """Theoretical multiply-add FLOPs for one forward pass (2 FLOPs per
-    connection: one multiply, one add -- the standard MAC convention),
-    plus one add per output element for the bias.
+    """Theoretical multiply-add FLOPs for one forward pass (2 per connection,
+    the standard MAC convention), plus one add per output element for bias.
 
-    active_only=True: what a sparse kernel could theoretically skip to.
-    active_only=False (default): what our dense implementation actually
-    does -- the same number regardless of sparsity, since it never skips
-    a masked connection's multiply.
+    active_only=True: what a sparse kernel could skip to. False (default):
+    what our dense path does, the same regardless of sparsity.
     """
     total = 0
     for layer in _prunable_layers(model):
@@ -79,26 +72,16 @@ def time_dense_vs_compressed_forward(
     model: Sequential, compressed, x: np.ndarray, repeats: int = 200
 ) -> tuple[float, float]:
     """Real wall-clock time (seconds) for `repeats` forward passes:
-    `model(Tensor(x))` (the existing dense x @ (weight*mask) path) vs.
-    `compressed(x)` (prune.compress's sliced-matrix path, see
-    prune/compress.py). Unlike unstructured masking, the compressed path
-    genuinely does less work -- contrast with
-    test_dense_matmul_speed_unaffected_by_sparsity's no-speedup result.
+    `model(Tensor(x))` (dense x @ (weight*mask)) vs. `compressed(x)`
+    (prune.compress's sliced-matrix path), which genuinely does less work.
 
-    CAVEAT, found in review: `model(Tensor(x))` pays for the autodiff
-    engine's own per-call bookkeeping (Tensor construction, `_prev`
-    set-building, `_backward` closure allocation) even though nothing
-    here ever calls `.backward()`; `compressed(x)` is plain NumPy with
-    none of that overhead. So the ratio from THIS function conflates two
-    separate effects: the genuine FLOP reduction from a smaller matrix,
-    and the autodiff engine's overhead vanishing because the compressed
-    path happens to not use Tensor at all. Measured: about 28% of the
-    gap is pure autodiff overhead, unrelated to compression. Use this
-    function to answer "is swapping in the compressed model during
-    inference faster than the current dense forward path" (a real,
-    fair question about this codebase's actual code paths) -- use
-    time_dense_numpy_vs_compressed_forward below for the FLOP-isolated,
-    apples-to-apples number.
+    CAVEAT: model(Tensor(x)) pays autodiff per-call bookkeeping (Tensor
+    construction, _prev sets, _backward closures) even though nothing calls
+    .backward(); compressed(x) is plain NumPy. So this ratio conflates the
+    genuine FLOP reduction with that overhead vanishing (~28% of the gap is
+    autodiff overhead). Use this for "is the compressed model faster than the
+    current dense path"; use time_dense_numpy_vs_compressed_forward for the
+    FLOP-isolated number.
     """
     x_t = Tensor(x)
     start = time.perf_counter()
@@ -115,15 +98,10 @@ def time_dense_vs_compressed_forward(
 
 
 def _dense_numpy_forward(model: Sequential, x: np.ndarray) -> np.ndarray:
-    """Forward through model's CURRENT masked weights in plain NumPy --
-    no Tensor, no autodiff bookkeeping at all. Exists only so
-    time_dense_numpy_vs_compressed_forward can compare apples-to-apples
-    against compress_model's output (also plain NumPy): both arms then
-    differ ONLY in matrix size, isolating the genuine FLOP-reduction
-    effect from the autodiff engine's unrelated per-call overhead (see
-    the caveat on time_dense_vs_compressed_forward above). Mirrors
-    prune.compress.compress_model's own layer-walking, just without any
-    slicing.
+    """Forward through model's CURRENT masked weights in plain NumPy (no
+    Tensor/autodiff). Lets time_dense_numpy_vs_compressed_forward compare
+    apples-to-apples against compress_model's output: both arms differ ONLY in
+    matrix size. Mirrors compress_model's layer-walking, without slicing.
     """
     for layer in model.layers:
         if isinstance(layer, Linear):
@@ -138,14 +116,10 @@ def _dense_numpy_forward(model: Sequential, x: np.ndarray) -> np.ndarray:
 def time_dense_numpy_vs_compressed_forward(
     model: Sequential, compressed, x: np.ndarray, repeats: int = 200
 ) -> tuple[float, float]:
-    """The apples-to-apples version of time_dense_vs_compressed_forward:
-    both arms are plain NumPy (_dense_numpy_forward vs. compressed(x)),
-    so the measured ratio reflects ONLY the FLOP reduction from a
-    genuinely smaller matrix, with none of the autodiff engine's own
-    bookkeeping overhead mixed in. This is the number to cite as "real
-    speedup from structured compression" -- time_dense_vs_compressed_forward's
-    ratio additionally (and misleadingly, if uncaveated) includes ~28%
-    of unrelated autodiff-overhead removal on top of that.
+    """Apples-to-apples version of time_dense_vs_compressed_forward: both arms
+    are plain NumPy (_dense_numpy_forward vs. compressed(x)), so the ratio
+    reflects ONLY the FLOP reduction from a smaller matrix. This is the number
+    to cite as "real speedup from structured compression".
     """
     start = time.perf_counter()
     for _ in range(repeats):

@@ -1,8 +1,6 @@
-"""Tests run_exchange_cycle -- the grow+drop exchange step at the heart
-of dynamic sparse training. The repeated-thrashing test at the bottom is
-the most important one here, in the same role test_masked_adam.py's
-suite played for the first half of this project: it's the concrete
-answer to "reason about the stability implications of regrowth."
+"""Tests run_exchange_cycle -- the grow+drop exchange step of dynamic sparse
+training. The repeated-thrashing test at the bottom is the key one: the
+concrete answer to "reason about the stability implications of regrowth."
 """
 
 import numpy as np
@@ -23,8 +21,7 @@ set_seed(0)
 
 class _DummyOptimizer:
     """Stands in where only mask mechanics are under test, not Adam's
-    own moment-reset behavior (that's covered separately, with real
-    Adam, below)."""
+    moment-reset (covered separately with real Adam below)."""
 
     def reset_state(self, param, indices):
         pass
@@ -43,58 +40,48 @@ def test_run_exchange_cycle_is_net_zero_active_count():
 
 
 def test_run_exchange_cycle_is_a_no_op_on_a_fully_dead_layer():
-    """At n_active_before == 0, the drop step's keep-target is also 0,
-    so _top_k_keep_mask(scores, n_keep=0) returns all-False regardless
-    of score -- even a +inf-forced "must survive" entry. Before this was
-    guarded, run_exchange_cycle would revive an entry and then
-    immediately drop it again in the very same call, violating its own
-    documented "revived entries survive their first cycle" guarantee.
-    Confirm the guard makes it a true no-op instead.
+    """At n_active_before == 0 the drop keep-target is also 0, so even a
+    +inf-forced entry gets dropped. Without the guard, a revive would be
+    immediately re-dropped; confirm the guard makes it a true no-op.
     """
     layer = Linear(3, 3)
-    set_mask(layer, np.zeros((3, 3)))  # fully dead: nothing active
+    set_mask(layer, np.zeros((3, 3)))  # fully dead
     assert layer.mask.data.sum() == 0.0
 
-    grow_scores = np.ones((3, 3))  # everything looks like a good revival candidate
+    grow_scores = np.ones((3, 3))
     drop_scores = np.abs(np.random.randn(3, 3))
     run_exchange_cycle(layer, drop_scores, grow_scores, n_exchange=1, optimizer=_DummyOptimizer())
 
-    assert layer.mask.data.sum() == 0.0  # still nothing active -- no revive-then-drop churn
+    assert layer.mask.data.sum() == 0.0  # no revive-then-drop churn
 
 
 def test_run_exchange_cycle_excludes_just_revived_from_drop():
-    """The landmine this function is built around: a freshly-revived
-    entry must survive its first cycle even if it would otherwise be the
-    single lowest-scoring entry by drop_scores -- it hasn't had a chance
-    to prove itself yet. A naive single-bucket "excluded" implementation
-    would let still-inactive entries usurp its slot instead; this proves
-    the three-way scoring (revived=+inf, still-inactive=-inf, original
-    real score) gets it right.
+    """A freshly-revived entry must survive its first cycle even if it's the
+    lowest-scoring by drop_scores. Proves the three-way scoring (revived=+inf,
+    still-inactive=-inf, original real score) gets it right.
     """
     layer = Linear(4, 4)
     keep = np.zeros((4, 4))
-    keep[0, :] = 1.0  # row 0 active, everything else inactive
+    keep[0, :] = 1.0  # row 0 active, rest inactive
     set_mask(layer, keep)
 
     grow_scores = np.zeros((4, 4))
     grow_scores[2, 0] = 100.0  # (2,0) wins the grow competition
 
     drop_scores = np.full((4, 4), 5.0)
-    drop_scores[2, 0] = -999.0  # lowest possible -- would be dropped first if eligible
-    drop_scores[0, 0] = 1.0  # the real lowest-scoring ORIGINAL active entry
+    drop_scores[2, 0] = -999.0  # would be dropped first if eligible
+    drop_scores[0, 0] = 1.0  # real lowest-scoring original active entry
 
     run_exchange_cycle(layer, drop_scores, grow_scores, n_exchange=1, optimizer=_DummyOptimizer())
 
-    assert layer.mask.data[2, 0] == 1.0  # survives despite the worst drop score
-    assert layer.mask.data[0, 0] == 0.0  # this one gets dropped instead
+    assert layer.mask.data[2, 0] == 1.0  # survives despite worst drop score
+    assert layer.mask.data[0, 0] == 0.0  # dropped instead
     assert layer.mask.data.sum() == 4.0  # net-zero
 
 
 def test_revived_entry_gets_exactly_zero_fresh_moments_in_integrated_path():
-    """Not just reset_state in isolation (already tested in
-    test_masked_adam.py) -- the wiring through run_exchange_cycle itself:
-    force a specific index to be the one revived, and check its m/v are
-    exactly 0 right after the cycle.
+    """The wiring through run_exchange_cycle itself (not reset_state in
+    isolation): force one index to be revived, check its m/v are exactly 0.
     """
     layer = Linear(3, 3)
     pairs = layer.masked_parameters()
@@ -106,9 +93,9 @@ def test_revived_entry_gets_exactly_zero_fresh_moments_in_integrated_path():
         opt.step()
 
     keep = np.ones((3, 3))
-    keep[1, 1] = 0.0  # mask this one off, but it already has real momentum
+    keep[1, 1] = 0.0  # mask off, but it already has real momentum
     set_mask(layer, keep)
-    assert opt.m[0][1, 1] != 0.0  # stale momentum from before masking, still sitting there
+    assert opt.m[0][1, 1] != 0.0  # stale momentum from before masking
 
     grow_scores = np.zeros((3, 3))
     grow_scores[1, 1] = 1.0  # only this masked-off entry is a candidate
@@ -121,16 +108,10 @@ def test_revived_entry_gets_exactly_zero_fresh_moments_in_integrated_path():
 
 
 def test_revive_un_freezing_a_dead_neurons_bias_resets_its_stale_moments():
-    """The interaction the per-feature tests don't cover: structured
-    pruning correctly freezes a dead neuron's bias (its own bias_mask
-    test), and run_exchange_cycle correctly resets a revived WEIGHT's
-    moments (the test above) -- but nothing previously reset the BIAS's
-    moments when a revival incidentally un-freezes it. set_mask resyncs
-    bias_mask = mask.any(axis=0) on every call, so reviving a single
-    weight into a fully-dead column flips that neuron's bias_mask back
-    to active; without a reset, its next update would use real,
-    pre-death momentum -- exactly the stale-state bug mask-aware Adam
-    exists to prevent, just rediscovered on the bias side.
+    """Reviving a weight into a fully-dead column flips its neuron's bias_mask
+    back to active (set_mask resyncs bias_mask = mask.any(axis=0)). Without a
+    reset, the bias's next update would use stale pre-death momentum -- the
+    same bug mask-aware Adam prevents, on the bias side.
     """
     from prune.mask import prune_neurons_to_count
 
@@ -138,7 +119,7 @@ def test_revive_un_freezing_a_dead_neurons_bias_resets_its_stale_moments():
     pairs = layer.masked_parameters()
     opt = Adam([p for p, _ in pairs], lr=0.1, masks=[m for _, m in pairs])
 
-    for _ in range(15):  # build up real, nonzero momentum everywhere, including bias
+    for _ in range(15):  # build up real momentum everywhere, including bias
         opt.zero_grad()
         layer(Tensor(np.random.randn(5, 3))).sum().backward()
         opt.step()
@@ -146,34 +127,27 @@ def test_revive_un_freezing_a_dead_neurons_bias_resets_its_stale_moments():
     stale_bias_v = opt.v[1][1]
     assert stale_bias_m != 0.0 and stale_bias_v != 0.0
 
-    # explicit, deterministic scores -- not neuron_magnitude_scores of
-    # randomly-initialized weights, whose ranking (and so which neuron
-    # actually dies) would depend on however much of the global RNG
-    # stream earlier tests/files happened to consume. Force neuron 1 to
-    # be the one killed, unambiguously, regardless of run order.
+    # deterministic scores so neuron 1 is killed regardless of RNG/run order.
     forced_kill_scores = np.array([10.0, -10.0, 10.0])
     prune_neurons_to_count(layer, forced_kill_scores, target_active=2)  # kills neuron 1
     assert layer.bias_mask.data[1] == 0.0
-    assert opt.m[1][1] == stale_bias_m  # frozen, untouched by the freeze itself -- expected
+    assert opt.m[1][1] == stale_bias_m  # frozen, untouched by the freeze
 
     grow_scores = np.zeros((3, 3))
-    grow_scores[0, 1] = 100.0  # force-revive the first weight feeding into dead neuron 1
+    grow_scores[0, 1] = 100.0  # force-revive a weight feeding dead neuron 1
     run_exchange_cycle(layer, np.abs(np.random.randn(3, 3)), grow_scores, n_exchange=1, optimizer=opt)
 
-    assert layer.bias_mask.data[1] == 1.0  # neuron 1 un-frozen as a side effect of the revival
-    assert opt.m[1][1] == 0.0  # must be a clean reset, not the stale pre-death value
+    assert layer.bias_mask.data[1] == 1.0  # neuron 1 un-frozen by the revival
+    assert opt.m[1][1] == 0.0  # clean reset, not the stale pre-death value
     assert opt.v[1][1] == 0.0
 
 
 def test_repeated_prune_revive_prune_same_connection_does_not_corrupt_state():
-    """The concrete answer to 'reason about the stability implications of
-    regrowth': cycle one specific connection through prune -> revive ->
-    prune -> revive several times in a row, and prove nothing accumulates
-    incorrectly -- the underlying weight value never moves while masked
-    (mask gates, never mutates), moments are exactly reset on every
-    single revival (not just the first), nothing ever goes non-finite,
-    and the state after thrashing is indistinguishable from a fresh
-    single-revive scenario fed the same final gradient.
+    """The concrete answer to 'stability implications of regrowth': cycle one
+    connection through prune->revive several times and prove nothing accumulates
+    wrongly -- the weight never moves while masked, moments reset on every
+    revival, nothing goes non-finite, and the final state matches a fresh
+    single-revive fed the same gradient.
     """
     layer = Linear(3, 3)
     pairs = layer.masked_parameters()
@@ -186,17 +160,15 @@ def test_repeated_prune_revive_prune_same_connection_does_not_corrupt_state():
         opt.step()
 
     for cycle in range(5):
-        # prune: mask target off (give it the lowest drop score, everything else high)
+        # prune: mask target off
         drop_scores = np.full((3, 3), 100.0)
         drop_scores[target] = -100.0
         keep = layer.mask.data.copy().astype(bool)
-        keep[target] = False  # forced off directly via set_mask -- simulates a real prune call
+        keep[target] = False
         set_mask(layer, keep)
 
-        # the value at THIS freeze, not the very first one: it's allowed
-        # (and expected) to have moved during the previous cycle's active
-        # training steps -- the invariant under test is "frozen while
-        # masked," not "permanently pinned to its first-ever frozen value."
+        # value at THIS freeze (it may have moved during the previous active
+        # cycle); the invariant is "frozen while masked", not "pinned forever".
         weight_value_at_this_freeze = layer.weight.data[target]
 
         # a few real training steps while masked
@@ -215,13 +187,12 @@ def test_repeated_prune_revive_prune_same_connection_does_not_corrupt_state():
         drop_scores = np.abs(np.random.randn(3, 3))
         run_exchange_cycle(layer, drop_scores, grow_scores, n_exchange=1, optimizer=opt)
 
-        assert layer.mask.data[target] == 1.0  # confirmed revived this cycle
-        assert opt.m[0][target] == 0.0  # reset, every single time, not just the first
+        assert layer.mask.data[target] == 1.0  # revived this cycle
+        assert opt.m[0][target] == 0.0  # reset every cycle, not just the first
         assert opt.v[0][target] == 0.0
-        assert layer.weight.data[target] == weight_value_at_this_freeze  # revival itself doesn't change the value
+        assert layer.weight.data[target] == weight_value_at_this_freeze  # revival doesn't move it
 
-        # a few real training steps while active -- the value is now
-        # free to move again, that's normal training, not corruption
+        # real training steps while active -- value is free to move again now
         for _ in range(3):
             opt.zero_grad()
             layer(Tensor(np.random.randn(5, 3))).sum().backward()
@@ -229,10 +200,8 @@ def test_repeated_prune_revive_prune_same_connection_does_not_corrupt_state():
         assert np.isfinite(opt.m[0]).all() and np.isfinite(opt.v[0]).all()
         assert np.isfinite(layer.weight.data).all()
 
-    # final check: after all that thrashing, one more prune+revive cycle's
-    # post-revival update must match a hand-derived FRESH Adam step exactly
-    # -- the same exact-formula-match bar test_masked_adam.py uses, proving
-    # no path-dependent residue survives the thrashing.
+    # final check: after thrashing, one more prune+revive's post-revival update
+    # must match a hand-derived FRESH Adam step, proving no residue survives.
     keep = layer.mask.data.copy().astype(bool)
     keep[target] = False
     set_mask(layer, keep)
@@ -254,9 +223,8 @@ def test_repeated_prune_revive_prune_same_connection_does_not_corrupt_state():
 
 
 def _build_mlp_with_copied_weights(source: Sequential) -> Sequential:
-    """A second model, identical weights/bias to `source`, so a dst_step
-    call on one and the manual equivalent on the other can be compared
-    bit-for-bit -- there's no built-in deep-copy for Linear/Sequential.
+    """A second model with identical weights/bias to `source`, for bit-for-bit
+    comparison (no built-in deep-copy for Linear/Sequential).
     """
     copy = Sequential(Linear(2, 8), ReLU(), Linear(8, 3))
     for src, dst in zip(source.layers, copy.layers):
@@ -267,10 +235,8 @@ def _build_mlp_with_copied_weights(source: Sequential) -> Sequential:
 
 
 def test_dst_step_ramp_phase_matches_existing_prune_to_sparsity_behavior():
-    """dst_step's ramp branch (step < prune_end_step) must produce a mask
-    byte-identical to run_part3's existing non-regrowth on_step_end
-    (accumulate_gradients + prune_to_sparsity directly) given the same
-    inputs -- a regression-style cross-check between the two code paths.
+    """dst_step's ramp branch must produce a mask byte-identical to
+    accumulate_gradients + prune_to_sparsity directly, given the same inputs.
     """
     mlp_a = Sequential(Linear(2, 8), ReLU(), Linear(8, 3))
     mlp_b = _build_mlp_with_copied_weights(mlp_a)
@@ -309,12 +275,9 @@ def test_dst_step_ramp_phase_matches_existing_prune_to_sparsity_behavior():
 
 
 def test_dst_step_maintenance_phase_does_one_sweep_not_two(monkeypatch):
-    """accumulate_dense_gradients's backward() pass already leaves
-    weight.grad correctly populated (same backward call that produces
-    w_eff.grad also writes weight.grad, via mul()'s backward) -- a
-    second accumulate_gradients sweep would silently redo identical
-    work. Pin this by making accumulate_gradients raise if dst_step
-    ever calls it again during the maintenance phase.
+    """accumulate_dense_gradients already populates weight.grad (same backward
+    that produces w_eff.grad), so a second sweep is redundant. Pin this by
+    making accumulate_gradients raise if the maintenance phase calls it.
     """
     import prune.dst as dst_module
 
@@ -350,9 +313,8 @@ def test_dst_step_maintenance_phase_does_one_sweep_not_two(monkeypatch):
 
 
 def test_dst_step_maintenance_phase_keeps_sparsity_constant_over_many_cycles():
-    """Once final_sparsity is reached, repeated dst_step calls must hold
-    each layer's active count exactly constant -- the "roughly constant"
-    DST claim, measured across many consecutive cycles, not just one.
+    """Once final_sparsity is reached, repeated dst_step calls must hold each
+    layer's active count exactly constant across many cycles.
     """
     mlp = Sequential(Linear(2, 8), ReLU(), Linear(8, 3))
     pairs = mlp.masked_parameters()

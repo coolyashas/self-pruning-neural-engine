@@ -87,9 +87,8 @@ def test_cost_report_keys_and_consistency():
 
 
 def test_dense_matmul_speed_unaffected_by_sparsity():
-    """The honest claim, measured: a 90%-sparse layer takes the same
-    wall-clock time as a 0%-sparse layer of the same shape, because
-    x @ (W*mask) is a full dense matmul regardless of mask content.
+    """A 90%-sparse layer takes the same wall-clock time as a 0%-sparse layer
+    of the same shape: x @ (W*mask) is a full dense matmul regardless of mask.
     """
     n_in, n_out, batch = 256, 256, 64
 
@@ -111,27 +110,16 @@ def test_dense_matmul_speed_unaffected_by_sparsity():
     t_dense = time_forward(0.0)
     t_sparse = time_forward(0.9)
 
-    # generous tolerance -- this is a noisy microbenchmark; the point is
-    # there's no dramatic speedup, not that the ratio is exactly 1.0
+    # generous tolerance: noisy microbenchmark, the point is no dramatic speedup
     ratio = t_sparse / t_dense
     assert 0.5 < ratio < 2.0, f"expected no speedup from sparsity, got ratio={ratio:.2f}"
 
 
 def test_compressed_forward_is_actually_faster_at_high_structured_sparsity():
-    """Contrast to test_dense_matmul_speed_unaffected_by_sparsity above:
-    that test proves unstructured sparsity gives no speedup. Structured
-    (neuron-level) pruning is different -- once whole neurons are gone,
-    prune.compress's sliced matrices are genuinely smaller, and a normal
-    dense matmul on them measurably does less work.
-
-    This specific comparison (model(Tensor(x)) vs compressed(x)) also
-    answers a real question -- "is swapping in the compressed model
-    during inference faster than the dense path this codebase actually
-    runs" -- but t_dense here also carries the autodiff engine's own
-    per-call bookkeeping overhead, unrelated to compression (see
-    test_compressed_forward_speedup_isolated_from_autodiff_overhead
-    below for the FLOP-isolated number). The bound is loosened
-    accordingly so this test isn't measuring the same thing twice.
+    """Unlike unstructured sparsity (no speedup), structured pruning yields
+    genuinely smaller sliced matrices, so a dense matmul on them does less
+    work. t_dense here also carries autodiff per-call overhead unrelated to
+    compression (see the isolated test below), so the bound is loosened.
     """
     mlp = Sequential(Linear(2, 128), ReLU(), Linear(128, 128), ReLU(), Linear(128, 3))
     for layer in (mlp.layers[0], mlp.layers[2]):
@@ -146,15 +134,11 @@ def test_compressed_forward_is_actually_faster_at_high_structured_sparsity():
 
 
 def test_compressed_forward_speedup_isolated_from_autodiff_overhead():
-    """The apples-to-apples version: both arms are plain NumPy, so the
-    ratio reflects ONLY the FLOP reduction from a genuinely smaller
-    matrix, with the Tensor/autodiff engine's own per-call overhead
-    (irrelevant to compression) excluded from both sides. Measured at
-    this same configuration: ratio (compressed/Tensor-dense) ~0.26 vs.
-    ratio (compressed/numpy-dense) ~0.36 -- about 28% of the naive
-    "~4x" claim was actually autodiff bookkeeping disappearing, not
-    matrix-size reduction. The bound here (0.5) targets the real,
-    FLOP-only effect, intentionally less dramatic than the naive ratio.
+    """Apples-to-apples: both arms are plain NumPy, so the ratio reflects ONLY
+    the FLOP reduction from a smaller matrix, excluding autodiff overhead.
+    Measured: ~0.36 here vs. ~0.26 with Tensor-dense -- about 28% of the naive
+    "~4x" was autodiff bookkeeping, not matrix size. Bound (0.5) targets the
+    FLOP-only effect.
     """
     mlp = Sequential(Linear(2, 128), ReLU(), Linear(128, 128), ReLU(), Linear(128, 3))
     for layer in (mlp.layers[0], mlp.layers[2]):

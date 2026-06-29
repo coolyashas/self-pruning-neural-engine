@@ -12,12 +12,7 @@ def _as_tensor(x) -> Tensor:
 
 
 def _unbroadcast(grad: np.ndarray, shape: tuple[int, ...]) -> np.ndarray:
-    """Undo NumPy broadcasting: sum grad back down to the input's shape.
-
-    Broadcasting either adds leading axes or stretches size-1 axes, so the
-    backward of "stretch" is "sum" — each broadcast-copied element's
-    gradients need to land back on the one original element they came from.
-    """
+    """Undo NumPy broadcasting: sum grad back down to the input's shape."""
     while grad.ndim > len(shape):
         grad = grad.sum(axis=0)
 
@@ -75,17 +70,8 @@ def mul(a, b) -> Tensor:
 def div(a, b) -> Tensor:
     """a / b, elementwise, with broadcasting.
 
-    Numerical stability: unlike mul/add/sub, this has no protection near
-    b == 0 -- d(a/b)/da = 1/b and d(a/b)/db = -a/b^2 both blow up to
-    inf/nan there, and forward division by exact zero does too. No
-    epsilon is added here deliberately: this op isn't on this project's
-    actual forward path (Linear/softmax_cross_entropy never call it;
-    softmax's own division is computed directly in NumPy, not through
-    this graph node), so there's no real input distribution to tune an
-    epsilon against, and clamping would silently change the result for
-    any caller that DOES pass values near zero on purpose. If this op
-    is ever used somewhere a small denominator is plausible, that call
-    site -- not this generic op -- is where a guard belongs.
+    No epsilon guard near b == 0: this op isn't on the forward path, so a
+    guard belongs at any call site where a small denominator is plausible.
     """
     a, b = _as_tensor(a), _as_tensor(b)
     out = Tensor(a.data / b.data, a.requires_grad or b.requires_grad, (a, b), "div")

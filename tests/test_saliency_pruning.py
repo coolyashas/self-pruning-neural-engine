@@ -42,10 +42,8 @@ def test_accumulate_gradients_single_batch_matches_plain_backward():
 
 
 def test_accumulate_gradients_matches_true_dataset_mean_with_even_batches():
-    """batch_size=4 divides N=8 evenly, so every batch is the same size
-    -- the case where "sum of per-batch means" and "true dataset mean"
-    happen to coincide. Confirms the weighted accumulation reduces to
-    the obvious answer when there's nothing uneven to get wrong.
+    """batch_size=4 divides N=8 evenly, where "sum of per-batch means" and
+    "true dataset mean" coincide. Confirms the weighting reduces correctly.
     """
     mlp = Sequential(Linear(2, 4), ReLU(), Linear(4, 3))
     X = np.random.randn(8, 2)
@@ -63,15 +61,9 @@ def test_accumulate_gradients_matches_true_dataset_mean_with_even_batches():
 
 
 def test_accumulate_gradients_matches_true_dataset_mean_with_uneven_final_batch():
-    """The case that actually matters: batch_size=3 does NOT divide
-    N=8 evenly (batches of 3, 3, 2). Each backward() computes a
-    BATCH-mean gradient -- naively summing those un-weighted (the
-    previous behavior here) overweights the smaller final batch's
-    examples relative to the full ones. The correct result must match
-    a single direct backward() over the WHOLE dataset (which IS the
-    true full-dataset-mean gradient by construction, since
-    softmax_cross_entropy's own mean reduction divides by N), not "sum
-    of each batch's mean gradient".
+    """batch_size=3 does NOT divide N=8 evenly (batches of 3, 3, 2). Naively
+    summing per-batch means overweights the smaller final batch; the correct
+    result must match a single direct backward() over the whole dataset.
     """
     mlp = Sequential(Linear(2, 4), ReLU(), Linear(4, 3))
     X = np.random.randn(8, 2)
@@ -84,10 +76,8 @@ def test_accumulate_gradients_matches_true_dataset_mean_with_uneven_final_batch(
     softmax_cross_entropy(mlp(Tensor(X)), y).backward()
     true_mean = mlp.layers[0].weight.grad.copy()
 
-    # the buggy reference this test used to assert against, kept here
-    # only to prove it's now DIFFERENT from the true mean -- i.e. the
-    # old behavior and the fixed behavior are genuinely distinguishable,
-    # not just two ways of writing the same answer.
+    # the old buggy "sum of per-batch means", kept only to prove it's now
+    # genuinely different from the true mean (the fix is distinguishable).
     buggy_sum_of_means = np.zeros_like(mlp.layers[0].weight.data)
     for start in range(0, 8, 3):
         for p in mlp.parameters():
@@ -102,15 +92,9 @@ def test_accumulate_gradients_matches_true_dataset_mean_with_uneven_final_batch(
 
 
 def test_accumulate_gradients_skips_a_parameter_never_touched_this_sweep():
-    """accumulate_gradients is a generic model helper (takes any model
-    with .parameters()/.__call__()), not hardcoded to this project's
-    fully-connected Sequential MLP, where every parameter happens to
-    get a gradient on every batch. A parameter a future, conditionally-
-    used architecture's forward never touches would leave p.grad as
-    None after backward() -- unconditionally doing `batch_weight *
-    p.grad` would crash with `TypeError: unsupported operand type(s)
-    for *: 'float' and 'NoneType'` instead of deliberately skipping it.
-    Confirmed by direct execution before this guard existed.
+    """accumulate_gradients is a generic helper: a parameter the forward never
+    touches leaves p.grad None after backward(), which must be skipped, not
+    crash on `float * None`.
     """
     from engine.tensor import Tensor as T
 
@@ -127,23 +111,22 @@ def test_accumulate_gradients_skips_a_parameter_never_touched_this_sweep():
             return self.real_layer.parameters() + [self.extra_param]
 
     real_layer = Linear(2, 3)
-    extra_param = T(np.ones((5, 5)), requires_grad=True)  # never used in the forward path
+    extra_param = T(np.ones((5, 5)), requires_grad=True)  # never used in forward
     model = _ModelWithDisconnectedParam(real_layer, extra_param)
 
     X = np.random.randn(10, 2)
     y = np.random.randint(0, 3, size=10)
 
-    accumulate_gradients(model, X, y, batch_size=4)  # uneven last batch too -- must not crash
+    accumulate_gradients(model, X, y, batch_size=4)  # uneven last batch, must not crash
 
-    assert extra_param.grad is not None  # zero-initialized total, not left None
+    assert extra_param.grad is not None  # zero-initialized total, not None
     assert np.array_equal(extra_param.grad, np.zeros((5, 5)))
-    assert real_layer.weight.grad is not None  # the real parameter still got its gradient
+    assert real_layer.weight.grad is not None  # real param still got its gradient
 
 
 def test_saliency_and_magnitude_can_disagree():
-    """The whole point of having both criteria: a large weight with near-
-    zero gradient should rank LOW on saliency despite ranking HIGH on
-    magnitude, and vice versa for a small weight with a large gradient.
+    """The point of having both criteria: a large weight with near-zero
+    gradient ranks LOW on saliency but HIGH on magnitude, and vice versa.
     """
     layer = Linear(2, 2)
     layer.weight.data = np.array([[10.0, 0.1], [0.1, 10.0]])

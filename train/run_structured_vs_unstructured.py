@@ -1,20 +1,11 @@
-"""Structured vs. unstructured pruning, compared at matched connection-
-count sparsity: does pruning whole neurons cost more accuracy than
-pruning individual weights, at the same overall sparsity? Structured
-pruning is coarser by construction -- an all-or-nothing decision per
-neuron, unable to keep a few good weights in an otherwise-weak neuron's
-column -- so it should generally cost more accuracy at a given sparsity.
-This measures whether that actually shows up, rather than assuming it.
+"""Structured vs. unstructured pruning at matched connection-count sparsity:
+does pruning whole neurons cost more accuracy than pruning individual weights?
+Structured is coarser (all-or-nothing per neuron), so it should cost more;
+this measures whether it actually does. Orchestrates many run_part3 and
+run_part4_structured calls and aggregates them.
 
-Mirrors run_pareto_sweep.py's relationship to run_part3.py: this script
-orchestrates many single runs (here, both run_part3 and
-run_part4_structured) and aggregates them, rather than training itself.
-
-Sparsities are deliberately lower than the unstructured Pareto sweep's
-0.9-0.95 ceiling: pruning 90%+ of the neurons in a 128-wide layer leaves
-~13 neurons and likely collapses accuracy outright on its own. That's a
-reportable finding if it happens, not a reason to avoid testing it -- the
-default range here just stays where both methods have a chance.
+Sparsities stay below the unstructured sweep's 0.9-0.95 ceiling: pruning 90%+
+of a 128-wide layer leaves ~13 neurons and likely collapses accuracy on its own.
 """
 
 from __future__ import annotations

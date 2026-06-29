@@ -55,9 +55,8 @@ def test_compress_actually_shrinks_the_matrices():
 
 
 def test_compress_last_layer_output_never_sliced_even_if_masked():
-    """A caller mistakenly zeroing a whole output column on the FINAL
-    layer (e.g. via a bug upstream) must not shrink the output width --
-    dropping a class changes the model's meaning, not just its size.
+    """Zeroing a whole output column on the FINAL layer must not shrink the
+    output width -- dropping a class changes meaning, not just size.
     """
     mlp = _make_mlp()
     mlp.layers[-1].mask.data[:, 1] = 0.0  # simulate an accidental full-column prune on output
@@ -66,26 +65,21 @@ def test_compress_last_layer_output_never_sliced_even_if_masked():
     assert compressed.layers[-1].weight.shape[1] == 3
     assert compressed.layers[-1].bias.shape[0] == 3
 
-    # the masked-out weight contribution is baked into w_eff as zero already,
-    # but bias (never masked) still applies -- compressed must match dense exactly
+    # masked weight is zero in w_eff, but bias (never masked) still applies
     x = np.random.randn(4, 2)
     assert np.allclose(_dense_forward(mlp, x), compressed(x), atol=1e-12)
 
 
 def test_compress_matches_dense_forward_with_nonzero_bias():
-    """Regression for a real bug: bias is never masked (only weights are),
-    so a structurally-pruned neuron with a NONZERO bias still emits
-    ReLU(0 + bias) in the dense forward -- not exactly 0. compress_model
-    assumes a pruned neuron contributes nothing downstream, which is only
-    true because prune_neurons_to_count also zeros a retired neuron's
-    bias. This test uses a trained-looking nonzero bias (every earlier
-    test in this file used freshly-constructed layers, whose bias starts
-    at exactly 0.0 -- which accidentally hid this bug).
+    """Regression: a pruned neuron with NONZERO bias emits ReLU(0 + bias), not
+    0. compress_model assumes a pruned neuron contributes nothing, which holds
+    only because prune_neurons_to_count zeros its bias. Uses a nonzero bias,
+    which fresh layers (bias 0.0) accidentally hid.
     """
     mlp = _make_mlp()
     for layer in mlp.layers:
         if hasattr(layer, "bias"):
-            layer.bias.data = np.random.randn(*layer.bias.data.shape)  # nonzero, "post-training"-like
+            layer.bias.data = np.random.randn(*layer.bias.data.shape)  # nonzero, post-training-like
 
     prune_neurons_to_count(mlp.layers[0], neuron_magnitude_scores(mlp.layers[0]), 4)
     prune_neurons_to_count(mlp.layers[2], neuron_magnitude_scores(mlp.layers[2]), 3)
@@ -123,10 +117,8 @@ def test_compress_unsupported_layer_type_raises():
 
 
 def test_compress_model_with_no_linear_layers_raises_clearly():
-    """linear_layers[-1] on an empty list raised a bare, confusing
-    IndexError before this guard -- nonsensical input (a model with no
-    Linear layers has nothing to compress), but should fail loudly with
-    a clear message rather than a raw indexing error.
+    """A model with no Linear layers has nothing to compress; fail with a clear
+    message rather than a bare IndexError from linear_layers[-1].
     """
     mlp = Sequential(ReLU())
     with pytest.raises(AssertionError, match="no Linear layers"):

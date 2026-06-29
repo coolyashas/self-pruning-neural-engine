@@ -49,9 +49,8 @@ def test_run_part4_structured_never_prunes_final_layer_output(tmp_path):
 
 
 def test_run_part4_structured_compressed_model_matches_dense_exactly(tmp_path):
-    """The in-script sanity check inside main() already asserts this, but
-    re-verify it here too, with a fresh batch, since main()'s own check is
-    not itself a pytest assertion someone could see fail in a report.
+    """Re-verify main()'s in-script sanity check here as a real pytest
+    assertion, with a fresh batch.
     """
     _, mlp, compressed = main(
         epochs=15,

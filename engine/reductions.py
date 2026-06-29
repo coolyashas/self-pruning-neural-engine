@@ -36,8 +36,7 @@ def sum(a: Tensor, axis=None, keepdims: bool = False) -> Tensor:
 
 def mean(a: Tensor, axis=None, keepdims: bool = False) -> Tensor:
     out = Tensor(a.data.mean(axis=axis, keepdims=keepdims), a.requires_grad, (a,), "mean")
-    # mean divides by how many elements got averaged — easy to forget and
-    # treat this like sum's backward.
+    # backward divides by the number of averaged elements (unlike sum's).
     axes = _normalize_axis(axis, a.data.ndim)
     n = 1
     for ax in axes:

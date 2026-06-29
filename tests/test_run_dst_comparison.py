@@ -6,8 +6,7 @@ from train.run_dst_comparison import main, run_sweep, summarize
 
 
 def _tiny_sweep_kwargs():
-    # deliberately tiny: 2 sparsities x 2 seeds x 2 (with/without regrowth)
-    # = 8 runs, fast for CI -- not meant to demonstrate the real comparison.
+    # tiny: 2 sparsities x 2 seeds x 2 (with/without regrowth) = 8 runs, fast for CI
     return dict(
         sparsities=(0.5, 0.7),
         seeds=(0, 1),

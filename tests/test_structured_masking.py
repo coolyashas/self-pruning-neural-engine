@@ -20,7 +20,7 @@ def test_keep_neurons_from_scores_exact_count_and_keeps_highest():
 
 
 def test_prune_neurons_to_count_exact_budget():
-    layer = Linear(5, 12)  # non-square: rows=in_features, cols=out_features (neurons)
+    layer = Linear(5, 12)  # non-square: cols=out_features (neurons)
     scores = np.abs(np.random.randn(12))
     for target_active in [12, 9, 5, 1, 0]:
         prune_neurons_to_count(layer, scores, target_active)
@@ -33,9 +33,8 @@ def test_prune_neurons_to_count_exact_budget():
 
 
 def test_prune_neurons_to_count_never_revives():
-    """Adversarial, mirrors test_prune_to_sparsity_never_revives at
-    neuron granularity: give already-dead neurons enormous fake scores
-    on a later call and confirm they still don't come back.
+    """Give already-dead neurons enormous fake scores on a later call and
+    confirm they still don't come back.
     """
     layer = Linear(4, 6)
     scores_step1 = np.abs(np.random.randn(6))
@@ -59,10 +58,8 @@ def test_prune_neurons_to_count_increasing_target_is_noop():
 
 
 def test_mixed_unstructured_then_structured_pruning_on_same_layer():
-    """A neuron half-zeroed by unstructured pruning still counts as
-    "active" (any nonzero in its column) until structured pruning
-    explicitly finishes zeroing the rest of it -- this must not double-
-    count or miscompute the active total.
+    """A neuron half-zeroed by unstructured pruning still counts as active
+    (any nonzero in its column) until structured pruning finishes zeroing it.
     """
     layer = Linear(8, 6)
     mag_scores = magnitude_scores(layer)
@@ -81,8 +78,8 @@ def test_mixed_unstructured_then_structured_pruning_on_same_layer():
 
 
 def test_structured_pruning_forward_backward_still_correct():
-    """Structured pruning is still just per-entry mask gating under the
-    hood -- the existing masked-grad machinery needs no changes.
+    """Structured pruning is still per-entry mask gating under the hood, so
+    the masked-grad machinery needs no changes.
     """
     layer = Linear(4, 6)
     scores = np.abs(np.random.randn(6))

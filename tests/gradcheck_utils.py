@@ -1,5 +1,5 @@
 """Shared finite-difference gradient checking helpers, reused by every
-gradcheck test file in this repo (commit 9, commit 18, ...)."""
+gradcheck test file in this repo."""
 
 from __future__ import annotations
 

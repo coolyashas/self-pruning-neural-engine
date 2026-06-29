@@ -55,15 +55,9 @@ def test_non_finite_logits_are_rejected_before_numpy_emits_runtime_warnings():
 
 
 def test_column_shaped_labels_are_rejected_not_silently_misindexed():
-    """A label array of shape (N, 1) instead of (N,) is a common, easy
-    mistake (e.g. straight out of a CSV column). NumPy's fancy indexing
-    log_probs[arange(n), labels] does NOT raise for that shape -- it
-    broadcasts arange(n) (shape (n,)) against labels (shape (n,1)) into
-    an (n,n) index pair, silently selecting an n x n block instead of n
-    single entries, and .mean() then quietly averages the wrong thing.
-    Confirmed by direct execution before this guard existed: the same
-    logits with (N,) vs (N,1) labels produced two DIFFERENT scalar
-    losses and two different gradients, with no exception either way.
+    """A label array of shape (N, 1) instead of (N,) doesn't raise in fancy
+    indexing -- it broadcasts into an (n,n) index pair, silently selecting an
+    n x n block and averaging the wrong thing.
     """
     logits_data = np.random.randn(3, 4)
     labels_2d = np.array([0, 1, 2]).reshape(3, 1)
@@ -73,11 +67,8 @@ def test_column_shaped_labels_are_rejected_not_silently_misindexed():
 
 
 def test_negative_label_is_rejected_not_silently_misindexed():
-    """A label of -1 is valid NumPy negative indexing, not an
-    out-of-bounds error -- without a range check, fancy-indexing
-    log_probs[arange(n), labels] would silently select the LAST class
-    for that row instead of raising, producing a wrong loss/gradient
-    rather than a crash.
+    """A label of -1 is valid NumPy negative indexing: without a range check
+    it silently selects the LAST class instead of raising.
     """
     logits = Tensor(np.random.randn(3, 4), requires_grad=True)
     labels = np.array([0, -1, 2])
@@ -93,13 +84,9 @@ def test_out_of_range_label_is_rejected():
 
 
 def test_float_labels_are_rejected_with_a_clear_message_not_a_raw_indexerror():
-    """A float label array like np.array([0.0, 1.0, 2.0]) gets past
-    shape and range checks (both are dtype-agnostic comparisons) and
-    would otherwise die inside log_probs[arange(n), labels] with
-    NumPy's own raw "arrays used as indices must be of integer (or
-    boolean) type" -- not numerically wrong, but a leaky API boundary
-    that should fail with a message about THIS function's contract,
-    not a downstream NumPy implementation detail.
+    """A float label array passes shape/range checks but would die inside
+    fancy indexing with a raw, leaky NumPy IndexError; fail with a clear
+    message about this function's contract instead.
     """
     logits = Tensor(np.random.randn(3, 4), requires_grad=True)
     labels = np.array([0.0, 1.0, 2.0])
@@ -108,15 +95,8 @@ def test_float_labels_are_rejected_with_a_clear_message_not_a_raw_indexerror():
 
 
 def test_label_validation_guards_survive_python_dash_O():
-    """The actual claim isn't "this raises ValueError" (the tests above
-    already cover that) -- it's that the guard SURVIVES `python -O`,
-    which strips every `assert` statement from the running process
-    entirely. An in-process pytest.raises check can't tell the
-    difference between `assert` and `if: raise`, since pytest itself
-    never runs under -O. This spawns a real subprocess with -O and
-    confirms the (3,1)-shaped-labels case still raises there -- before
-    these guards were converted from `assert` to `if: raise`, this
-    exact repro silently produced a finite, wrong loss under -O instead.
+    """The guard must SURVIVE `python -O`, which strips asserts. Spawn a real
+    -O subprocess and confirm the (3,1)-shaped-labels case still raises there.
     """
     import subprocess
     import sys
@@ -140,10 +120,9 @@ def test_label_validation_guards_survive_python_dash_O():
 
 
 def test_full_pipeline_matmul_bias_broadcast_softmax_ce():
-    """Linear-style affine (X@W + b, b broadcast over the batch) feeding
-    into the fused loss, checked end to end through one backward() call.
-    Exercises matmul's backward chained with add's unbroadcast (#3 in the
-    pitfalls doc) followed by the fused softmax-CE backward.
+    """Affine (X@W + b) feeding the fused loss, end to end through one
+    backward(): matmul's backward chained with add's unbroadcast, then the
+    fused softmax-CE backward.
     """
     labels = np.array([0, 1, 2, 1, 0])
     X = np.random.randn(5, 4)

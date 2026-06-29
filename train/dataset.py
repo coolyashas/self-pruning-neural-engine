@@ -1,6 +1,5 @@
-"""2D spirals, synthetic (no download). A loader is just a function
-returning (X, y) arrays, so the training loop stays dataset-agnostic and
-could take a different loader later without any changes."""
+"""2D synthetic spirals (no download). A loader just returns (X, y) arrays,
+keeping the training loop dataset-agnostic."""
 
 from __future__ import annotations
 

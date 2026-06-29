@@ -21,9 +21,8 @@ def test_make_spirals_shapes_and_labels():
 
 
 def test_train_loop_stable_no_nan_and_learns():
-    """Full stack, real architecture from the locked scope (2-128-128-3,
-    He init, ReLU, Adam): trains on spirals with no NaNs and actually
-    learns, not just "loss goes down a little".
+    """Full stack (2-128-128-3, He init, ReLU, Adam): trains on spirals with
+    no NaNs and actually learns (>0.9 accuracy).
     """
     set_seed(0)
     X, y = make_spirals(n_per_class=300, n_classes=3, noise=0.2)
@@ -43,11 +42,8 @@ def test_train_loop_stable_no_nan_and_learns():
 
 
 def test_train_raises_on_non_finite_loss_instead_of_continuing():
-    """Training must halt the moment it diverges, not keep computing
-    updates from a NaN/inf loss. Forced by setting one weight to inf
-    before the very first forward pass. The loss should reject
-    non-finite logits directly, before NumPy's max-subtraction path
-    even gets a chance to emit a RuntimeWarning.
+    """Training must halt on divergence, not keep computing updates from a
+    NaN/inf loss. Forced by setting one weight to inf before the first forward.
     """
     set_seed(0)
     X, y = make_spirals(n_per_class=10, n_classes=3)
@@ -60,14 +56,8 @@ def test_train_raises_on_non_finite_loss_instead_of_continuing():
 
 
 def test_non_finite_loss_guard_survives_python_dash_O():
-    """This guard exists to STOP training immediately on divergence --
-    `assert` is stripped entirely under `python -O`, which would
-    silently let training continue computing garbage updates from a
-    NaN/inf loss instead. Implemented as `if: raise`, not `assert`,
-    specifically so it survives -O. An in-process pytest.raises check
-    can't tell the difference (pytest never runs under -O itself), so
-    this spawns a real subprocess with -O to confirm it still raises
-    there.
+    """The divergence guard is `if: raise`, not `assert`, so it survives
+    `python -O`. Spawn a real -O subprocess to confirm it still raises there.
     """
     import subprocess
     import sys

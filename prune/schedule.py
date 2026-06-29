@@ -1,6 +1,5 @@
-"""Gradual cubic sparsity schedule (Zhu & Gupta 2017): prune fast while
-there's slack, taper off near the target so the network gets more
-fine-tuning time at high sparsity instead of one abrupt cut.
+"""Gradual cubic sparsity schedule (Zhu & Gupta 2017): prune fast early, then
+taper near the target so the network gets fine-tuning time at high sparsity.
 """
 
 from __future__ import annotations

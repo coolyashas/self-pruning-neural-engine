@@ -42,9 +42,8 @@ def test_keep_mask_handles_ties_without_crashing():
 
 
 def test_magnitude_pruning_end_to_end():
-    """Real Linear layer, real scoring + selection + set_mask, then prove
-    the kept connections really are the largest-magnitude ones and the
-    pruned layer still works through a real forward+backward.
+    """Real scoring + selection + set_mask: the kept connections are the
+    largest-magnitude ones and the pruned layer still works end to end.
     """
     layer = Linear(5, 5)
     scores = magnitude_scores(layer)

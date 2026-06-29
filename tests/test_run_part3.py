@@ -7,8 +7,7 @@ from train.run_part3 import main
 
 
 def test_run_part3_produces_artifacts_and_reaches_sparsity(tmp_path):
-    # small/fast settings redirected to tmp_path -- never touches the real
-    # results/ directory (those are the actual Part-3 artifacts)
+    # small/fast settings to tmp_path, never the real results/ directory
     history, mlp = main(
         epochs=20,
         n_per_class=30,
@@ -37,9 +36,8 @@ def test_run_part3_produces_artifacts_and_reaches_sparsity(tmp_path):
 
 
 def test_run_part3_pruned_model_respects_masked_grad(tmp_path):
-    """Sparsity isn't just reported correctly -- the pruned model must
-    still satisfy the core invariant from commit 16/17: masked entries
-    get exactly zero gradient, even after a real self-pruning run.
+    """After a real self-pruning run, masked entries must still get exactly
+    zero gradient.
     """
     _, mlp = main(
         epochs=15,
@@ -64,9 +62,8 @@ def test_run_part3_pruned_model_respects_masked_grad(tmp_path):
 
 
 def test_enable_regrowth_default_false_is_byte_for_byte_unchanged(tmp_path):
-    """The new enable_regrowth/exchange_fraction params must be true
-    no-ops when enable_regrowth is left at its default -- explicitly
-    passing False must reproduce omitting it entirely, identically.
+    """enable_regrowth/exchange_fraction must be true no-ops at their defaults:
+    passing enable_regrowth=False must match omitting it entirely.
     """
     kwargs = dict(
         epochs=15,
@@ -100,11 +97,8 @@ def test_enable_regrowth_true_runs_end_to_end_and_reaches_sparsity(tmp_path):
     assert 0.0 <= final_acc <= 1.0
     assert final_sparsity_achieved >= 0.4  # reached close to the 0.5 target
 
-    # a FRESH forward+backward, not the leftover .grad from training: the
-    # last on_step_end call may have changed the mask (an exchange cycle)
-    # AFTER the .grad already sitting on weight was computed against the
-    # OLD mask, so reusing that stale .grad would compare grad and mask
-    # from two different moments -- mirrors test_run_part3_pruned_model_respects_masked_grad's pattern.
+    # FRESH forward+backward: the last exchange cycle may have changed the mask
+    # after the training .grad was computed against the old mask.
     for p in mlp.parameters():
         p.grad = None
     x = Tensor(np.random.randn(4, 2), requires_grad=True)
@@ -112,4 +106,4 @@ def test_enable_regrowth_true_runs_end_to_end_and_reaches_sparsity(tmp_path):
 
     prunable_layers = [layer for layer in mlp.layers if hasattr(layer, "mask")]
     for layer in prunable_layers:
-        assert np.all(layer.weight.grad[layer.mask.data == 0] == 0.0)  # still correct after regrowth cycles
+        assert np.all(layer.weight.grad[layer.mask.data == 0] == 0.0)

@@ -8,8 +8,7 @@ set_seed(0)
 
 
 def test_neuron_magnitude_scores_shape_and_formula():
-    # non-square on purpose: an axis mixup (summing over the wrong dim)
-    # would produce shape (10,) instead of (20,) and fail loudly here.
+    # non-square on purpose: an axis mixup would give shape (10,) not (20,)
     layer = Linear(10, 20)
     layer.weight.data = np.random.randn(10, 20)
 
@@ -29,9 +28,8 @@ def test_neuron_saliency_scores_shape_and_formula():
 
 
 def test_neuron_saliency_sums_signed_then_abs_not_abs_then_sum():
-    """The Taylor estimate of removing a neuron is |sum_i w_i*g_i| (the
-    column's signed saliencies cancel), NOT sum_i |w_i*g_i|. A column whose
-    per-connection contributions cancel must score near zero, not high.
+    """The Taylor estimate of removing a neuron is |sum_i w_i*g_i|, NOT
+    sum_i |w_i*g_i|: a column whose contributions cancel must score near zero.
     """
     layer = Linear(2, 2)
     # column 0: contributions +6 and -6 -> signed sum 0, abs-then-sum 12.
@@ -55,9 +53,9 @@ def test_neuron_saliency_requires_a_gradient():
 
 
 def test_neuron_magnitude_and_saliency_can_rank_neurons_oppositely():
-    """Structured analogue of test_saliency_and_magnitude_can_disagree:
-    a neuron with large weights but near-zero gradient should rank low
-    on saliency despite ranking high on magnitude, and vice versa.
+    """Structured analogue of test_saliency_and_magnitude_can_disagree: a
+    neuron with large weights but near-zero gradient ranks low on saliency,
+    high on magnitude, and vice versa.
     """
     layer = Linear(2, 2)
     # column 0: large weights, tiny gradient. column 1: small weights, huge gradient.

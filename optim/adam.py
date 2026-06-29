@@ -1,13 +1,10 @@
 """Adam: per-parameter first/second moment EMAs, bias-corrected.
 
-Mask-aware: an optional `masks` list (parallel to `parameters`, None for
-params that aren't pruned, e.g. bias) restricts the ENTIRE update -- not
-just the weight, but the m/v EMA updates too -- to active entries. Zero
-gradient alone is not enough to freeze a masked entry: `m = beta1*m +
-(1-beta1)*0` still decays old m toward zero instead of holding it, and
-leftover m keeps nudging the weight for several more steps even after
-masking. Restricting m/v's own update (not just relying on grad=0) is what
-actually freezes a masked connection.
+Mask-aware: an optional `masks` list (parallel to `parameters`, None where
+not pruned) restricts the ENTIRE update -- weight AND the m/v EMAs -- to
+active entries. Zero gradient alone doesn't freeze a masked entry: `m =
+beta1*m + (1-beta1)*0` keeps decaying old m, which nudges the weight for
+several more steps. Restricting the m/v update itself is what freezes it.
 """
 
 from __future__ import annotations
@@ -43,10 +40,8 @@ class Adam:
         for p, m, v, mask in zip(self.parameters, self.m, self.v, self.masks):
             if p.grad is None:
                 continue
-            # read mask.data fresh every step, not cached at __init__: the
-            # mask can change between steps (pruning happens between
-            # training steps), and Tensor.mask.data may even be reassigned
-            # to a new array by set_mask(), so we must dereference it now.
+            # read mask.data fresh every step: pruning changes the mask between
+            # steps, and set_mask() may reassign mask.data to a new array.
             active = np.ones_like(p.data, dtype=bool) if mask is None else (mask.data != 0)
 
             m_new = self.beta1 * m + (1 - self.beta1) * p.grad

@@ -1,14 +1,10 @@
-"""Part 4: structured (neuron-level) self-pruning run -- same cubic
-schedule as Part 3, but pruning whole output neurons instead of
-individual weights. Coarser by construction (an all-or-nothing decision
-per neuron), but the payoff is a real compressed model (prune/compress.py)
-that's actually faster, not just smaller-on-paper -- see
-evaluation/cost.py's measured structured speedup.
+"""Part 4: structured (neuron-level) self-pruning -- same cubic schedule as
+Part 3, but pruning whole output neurons. Coarser, but the payoff is a real
+compressed model (prune/compress.py) that's actually faster, not just
+smaller-on-paper.
 
-The final Linear's output is never a structured-pruning target: dropping
-an output class changes the model's meaning, not just its size
-(prune/compress.py's compress_model has its own defensive guard for this
-too, but the schedule itself should simply never aim there).
+The final Linear's output is never a target: dropping an output class changes
+the model's meaning, not just its size.
 """
 
 from __future__ import annotations
@@ -59,8 +55,7 @@ def main(
     masks = [m for _, m in pairs]
     opt = Adam(params, lr=lr, masks=masks)
 
-    # exclude the final Linear -- only the hidden layers' output neurons
-    # are ever structured-pruning targets
+    # exclude the final Linear: only hidden-layer output neurons are targets
     prunable_layers = [layer for layer in mlp.layers[:-1] if hasattr(layer, "mask")]
     score_fn = neuron_saliency_scores if criterion == "saliency" else neuron_magnitude_scores
 
@@ -86,11 +81,8 @@ def main(
         mean_loss = float(np.mean(losses_so_far[-steps_per_epoch:]))
         preds = np.argmax(mlp(Tensor(X)).data, axis=1)
         accuracy = float((preds == y).mean())
-        # weight_sparsity reports fraction of CONNECTIONS masked off -- since
-        # every neuron in a layer has the same number of incoming
-        # connections, pruning whole neurons is exactly equivalent here to
-        # the same fraction of connections, making this directly comparable
-        # to run_part3's unstructured sparsity numbers.
+        # weight_sparsity is connection-fraction; since neurons have equal
+        # incoming counts, this stays directly comparable to run_part3's.
         history.append((step, weight_sparsity(mlp), mean_loss, accuracy))
 
     train(
@@ -105,9 +97,7 @@ def main(
         grad_clip=1.0,
     )
 
-    # in-script sanity check on top of test_compress.py's dedicated suite:
-    # the compressed model must reproduce this real trained/pruned model's
-    # forward exactly, not just close.
+    # sanity check: the compressed model must reproduce the dense forward exactly.
     compressed = compress_model(mlp)
     sanity_x = np.random.randn(8, 2)
     dense_out = mlp(Tensor(sanity_x)).data

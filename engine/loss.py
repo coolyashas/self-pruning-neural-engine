@@ -20,48 +20,27 @@ def softmax_cross_entropy(logits: Tensor, labels: np.ndarray) -> Tensor:
     n, n_classes = logits.shape
     labels = np.asarray(labels)
 
-    # These three checks are real input-validation, not debug-only
-    # sanity checks -- they MUST survive `python -O` (which strips every
-    # `assert` statement, silently re-enabling the exact wrong-answer
-    # paths they exist to prevent, confirmed by running this function
-    # under -O before this fix). Plain `if: raise` instead of `assert`.
+    # `if: raise` not `assert`, so the checks survive `python -O`. Each guards
+    # a NumPy fancy-indexing path that would otherwise give a silently wrong
+    # loss/gradient rather than an error.
 
-    # Integer dtype, checked first: a float label array like
-    # array([0.0, 1.0, 2.0]) would otherwise reach the fancy-indexing
-    # below and die there with NumPy's own raw
-    # "IndexError: arrays used as indices must be of integer (or
-    # boolean) type" -- not wrong, but a leaky API boundary that should
-    # fail with a message about THIS function's contract, not a
-    # downstream NumPy implementation detail.
+    # Integer dtype: a float label array would hit the indexing below with a
+    # raw, leaky NumPy IndexError.
     if not np.issubdtype(labels.dtype, np.integer):
         raise ValueError(f"labels must be an integer array, got dtype={labels.dtype}")
 
-    # labels MUST be 1D, shape (n,) -- a common, easy mistake is passing
-    # (n, 1) (e.g. straight out of a CSV column or a one-hot-decode that
-    # forgot to .squeeze()). NumPy's fancy indexing below does NOT raise
-    # for that shape: log_probs[arange(n), labels] with labels.shape ==
-    # (n, 1) broadcasts arange(n) (shape (n,)) against labels (shape
-    # (n, 1)) into an (n, n) index pair, silently selecting an n x n
-    # block instead of n single entries, and .mean() then quietly
-    # averages the wrong object -- a different, wrong loss AND gradient,
-    # confirmed by direct execution, with no exception raised anywhere.
-    # Catching the shape here, before that indexing happens, turns a
-    # silent wrong answer into a loud, immediate error.
+    # Shape (n,): a (n, 1) array broadcasts into an (n, n) index pair and
+    # silently averages the wrong object instead of raising.
     if labels.shape != (n,):
         raise ValueError(f"labels must have shape ({n},), got {labels.shape}")
 
-    # fancy-indexing with an out-of-[0, C) label doesn't always raise: a
-    # label of -1 is valid NumPy negative indexing and silently selects
-    # the LAST class instead of erroring -- a wrong loss/gradient, not a
-    # crash. Catch it here rather than downstream.
+    # Range [0, C): a negative label is valid NumPy negative indexing and
+    # silently selects the wrong class.
     if not np.all((labels >= 0) & (labels < n_classes)):
         raise ValueError(f"labels must be in [0, {n_classes}), got min={labels.min()}, max={labels.max()}")
 
-    # A non-finite logit row is already a diverged model state. Letting
-    # it flow into max-subtraction computes inf - inf or nan - nan,
-    # which only produces a downstream RuntimeWarning before the loss
-    # eventually becomes non-finite. Failing here turns that into one
-    # direct, deterministic error at the actual boundary.
+    # Non-finite logits mean a diverged model; fail here rather than emit a
+    # downstream RuntimeWarning from inf - inf in the max-subtraction.
     if not np.all(np.isfinite(logits.data)):
         raise FloatingPointError("softmax_cross_entropy received non-finite logits")
 

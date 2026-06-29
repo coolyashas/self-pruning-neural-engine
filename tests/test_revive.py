@@ -8,22 +8,21 @@ set_seed(0)
 
 
 def test_revive_to_count_never_selects_already_active():
-    """Adversarial, mirrors test_prune_to_sparsity_never_revives's spirit
-    inverted: give already-active entries an enormous fake score and
-    confirm revive_to_count still never touches them -- they aren't even
-    candidates, since only masked-off entries are eligible.
+    """Give already-active entries an enormous fake score and confirm
+    revive_to_count still never touches them -- only masked-off entries are
+    eligible candidates.
     """
     layer = Linear(5, 5)
     keep = np.zeros((5, 5))
-    keep[0, :] = 1.0  # row 0 active, everything else masked off
+    keep[0, :] = 1.0  # row 0 active, rest masked off
     set_mask(layer, keep)
 
     scores = np.zeros((5, 5))
-    scores[0, :] = 1e6  # adversarial: the active row scores far higher than anything else
+    scores[0, :] = 1e6  # adversarial: active row scores highest
     revived = revive_to_count(layer, scores, n_revive=5)
 
-    assert not np.any(revived[0, :])  # active row never "revived" -- it wasn't a candidate
-    assert layer.mask.data[0, :].sum() == 5  # unchanged, still active
+    assert not np.any(revived[0, :])  # active row not a candidate
+    assert layer.mask.data[0, :].sum() == 5  # unchanged
 
 
 def test_revive_to_count_exact_budget():
@@ -71,8 +70,7 @@ def test_revive_keeps_highest_scoring_masked_entries():
 
 
 def test_revive_does_not_change_weight_values():
-    """Reviving only flips the mask -- the underlying weight value stays
-    whatever it was frozen at (mask gates, never destroys/resets).
+    """Reviving only flips the mask; the weight value stays frozen.
     """
     layer = Linear(3, 3)
     keep = np.zeros((3, 3))
@@ -84,8 +82,8 @@ def test_revive_does_not_change_weight_values():
 
 
 def test_revive_to_count_does_not_break_prune_to_sparsity_contract():
-    """Regression check: revive_to_count is additive -- prune_to_sparsity
-    itself must remain untouched, including its never-revives guarantee.
+    """revive_to_count is additive: prune_to_sparsity's never-revives
+    guarantee must remain untouched.
     """
     layer = Linear(6, 6)
     scores_step1 = np.abs(np.random.randn(6, 6))
