@@ -24,7 +24,7 @@ RESULTS_DIR = os.path.join(os.path.dirname(__file__), "..", "results")
 def run_sweep(
     criteria=("magnitude", "saliency"),
     sparsities=(0.0, 0.5, 0.75, 0.9, 0.95),
-    seeds=(0, 1, 2),
+    seeds=(0, 1, 2, 3, 4),
     epochs=100,
     n_per_class=300,
     batch_size=32,
