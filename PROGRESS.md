@@ -56,7 +56,7 @@ Commits 33-38 build dynamic sparse training (regrowth), the second gap from the 
 | 35 | feat(prune): revive_to_count — mask regrowth primitive | [x] | Inverted `-inf` trick; returns revived indices, doesn't touch optimizer/weights. Adversarial + budget + clamping tests (135 total) |
 | 36 | feat(prune): run_exchange_cycle — grow+drop, net-zero active count | [x] | New `prune/dst.py`. Caught a pre-commit bug: drop needs three-way scoring (revived +inf / inactive -inf / active real). 5-cycle stability test (139 total) |
 | 37 | feat(prune): dst_step — ramp-then-maintain scheduling | [x] | Ramps like run_part3, then periodic `run_exchange_cycle`. Byte-exact ramp cross-check + constant active count (141 total) |
-| 38 | feat(train): enable_regrowth opt-in + DST comparison run | [x] | `run_part3` opt-in (default off, byte-identical when omitted) + comparison run. Measured honestly: regrowth hurt accuracy here (90%: 99.67% vs 94.89%) (146 total) |
+| 38 | feat(train): enable_regrowth opt-in + DST comparison run | [x] | `run_part3` opt-in (default off, byte-identical when omitted) + comparison run. Regrowth reduced accuracy here (90%: 99.67% vs 94.89%) (146 total) |
 
 Commits 39+ fix concrete, executed-and-verified issues found in a hostile "Staff AI Platform Review" pass over the whole repo (re-derived every op's math by hand, ran adversarial repros against the actual code rather than trusting comments/tests/docs). Each row cites the exact repro that proved the issue real before it was fixed.
 

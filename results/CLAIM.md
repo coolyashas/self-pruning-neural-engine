@@ -67,5 +67,3 @@ MLP), one optimizer (Adam), and one sparsity schedule (cubic, 5 seeds).
 It is not a general claim that saliency always beats magnitude pruning —
 a larger or harder task, a different architecture, or a different
 schedule could behave differently.
-</content>
-</invoke>

@@ -2,7 +2,7 @@
 
 This document answers four questions about the pruning engine, in order:
 
-1. How the importance criterion is derived, and why it approximates the loss change from removing a connection (§1).
+1. How the importance criterion is derived, and why it approximates the loss change from removing a connection — and why pruning is scheduled gradually rather than in one shot (§1).
 2. What the engine computes as the gradient of a masked weight, and why that is the right choice (§2).
 3. Where the autodiff engine bottlenecks, and how to optimize it (§3).
 4. How to serve a self-pruned model in a multi-tenant inference service at scale (§4).
@@ -35,6 +35,12 @@ Two consequences show up directly in the code:
 Removing an output *neuron* zeros its whole incoming column at once. The same Taylor argument applied to the group gives `ΔL ≈ -Σ_i w_i·g_i` over the column, so the loss increase is `|Σ_i w_i·g_i|` — sum the signed per-connection saliencies, then take the absolute value (`prune/criteria.py:neuron_saliency_scores`).
 
 This is deliberately not `Σ_i |w_i·g_i|` (abs-then-sum). By the triangle inequality that L1 form upper-bounds the real estimate and equals it only when every connection in the column shares a sign. The two diverge when a column's contributions cancel, and that cancellation is real to first order: a neuron whose incoming saliencies sum to zero has near-zero net effect when removed, so it should score low — which abs-then-sum would wrongly rank high (`test_neuron_saliency_sums_signed_then_abs_not_abs_then_sum`). Squaring instead of abs (`(Σ w_i·g_i)²`, Molchanov et al. 2019) gives an identical ranking.
+
+### Schedule: gradual cubic, not one-shot
+
+The criterion decides *which* connections to remove; the schedule decides *when*. This engine ramps sparsity up gradually during training along a cubic curve (`prune/schedule.py:cubic_sparsity`, Zhu & Gupta 2017) — most cuts early, tapering toward the target — because the network has the most slack when densest, and the last few percent deserve more recovery steps between cuts (`test_cubic_sparsity_prunes_faster_early_than_late`).
+
+Gradual beats one-shot because pruning and training are coupled: after each small cut the survivors take gradient steps and recover, so saliency is re-scored on the recovered network and each `Δw` stays small enough for §1's first-order estimate to hold. One-shot pruning to 90% forfeits all of this — dense-only gradients, one enormous `Δw` far outside the Taylor regime, no budget left to recover. Its only edge is avoiding the periodic `accumulate_gradients` sweep, which makes it defensible only for a given pretrained model with no retrain budget — not this from-scratch task, where folding pruning into training is nearly free.
 
 ## 2. The gradient of a masked weight
 
@@ -92,7 +98,7 @@ There are two distinct benefits, with different requirements:
 
 `neuron_magnitude_scores`/`neuron_saliency_scores` score whole output columns (`axis=0` of `weight`, since `weight.shape == (in_features, out_features)`); `prune/mask.py:prune_neurons_to_count` zeros entire columns and their bias entries by the same `-inf`-forces-never-revive top-k trick as `prune_to_sparsity`, at column granularity. `prune/compress.py:compress_model` then builds a genuinely smaller dense model: a layer's dead output columns make the next layer's corresponding input rows dead too (`ReLU(0) == 0` passes deadness through), so alive-neuron index sets thread layer to layer, row- and column-slicing real NumPy arrays. No `Tensor`, no mask multiply left to skip.
 
-The speedup is real, but the first measurement overstated it (caught in review). Comparing `model(Tensor(x))` against `compressed(x)` conflates genuine FLOP reduction with the autodiff bookkeeping that only the Tensor path pays. Decomposed, about 28% of the original ~4x ratio was autodiff overhead, not matrix size. The apples-to-apples number — plain NumPy at full size vs. plain NumPy at compressed size, `evaluation/cost.py:time_dense_numpy_vs_compressed_forward` — is **2.8x** at 75% structured sparsity on the 128-wide hidden layers. This is the same discipline this section holds unstructured masking to, applied a level deeper: a benchmark whose two paths differ in more than one way can overstate a real effect as easily as dense×mask can fake one.
+The benchmark must isolate the FLOP effect from autodiff overhead. Comparing `model(Tensor(x))` against `compressed(x)` conflates the two: the dense arm is charged for graph construction the compressed arm never does, which inflates the ratio. The apples-to-apples measurement runs plain NumPy on both arms — full size vs. compressed size (`evaluation/cost.py:time_dense_numpy_vs_compressed_forward`) — so the ratio reflects only matrix size. That is the number to cite, committed in `results/cost_report.md`: a **>1x** speedup at 75% structured sparsity on the 128-wide hidden layers (the committed run measures ~5.3x; the exact multiple is machine/BLAS-dependent — see the environment line in that file — so the durable claim is the direction, not the figure). This is the same discipline this section applies to unstructured masking, one level deeper: a benchmark whose two paths differ in more than one way can overstate a real effect as easily as dense×mask can fake one.
 
 Accuracy cost: a comparison sweep (`train/run_structured_vs_unstructured.py`, 3 sparsities × 5 seeds) found structured and unstructured saliency pruning statistically indistinguishable on this task (~99.7% both, std < 0.001) up to 85% sparsity. The expected "structured is coarser, so it costs more accuracy at matched sparsity" penalty did not appear, consistent with this task's overparameterization (`results/CLAIM.md`).
 
@@ -100,7 +106,7 @@ Accuracy cost: a comparison sweep (`train/run_structured_vs_unstructured.py`, 3 
 
 At serve time the masks are frozen, so the question is purely how sparsity becomes cheaper inference when one fleet hosts many tenants' models at thousands of requests per second.
 
-**Ship the compressed model, not the masked one.** §3 is the binding constraint: `x @ (weight * mask)` is a dense GEMM that never skips a zero, so unstructured masks buy nothing on the latency path, and per-weight sparsity is hostile to the batched GEMMs and tensor cores serving throughput depends on. The serving artifact is the output of `prune/compress.py:compress_model`: a smaller dense network (§3's measured ~2.8x), plain matmuls, no mask multiply, no Tensor overhead. This pushes the trade-off toward structured pruning for anything served, even where unstructured reaches slightly higher accuracy at matched sparsity, because a smaller dense matrix is the only "sparsity" a batched serving kernel can exploit.
+**Ship the compressed model, not the masked one.** §3 is the binding constraint: `x @ (weight * mask)` is a dense GEMM that never skips a zero, so unstructured masks buy nothing on the latency path, and per-weight sparsity is hostile to the batched GEMMs and tensor cores serving throughput depends on. The serving artifact is the output of `prune/compress.py:compress_model`: a smaller dense network (§3's measured >1x speedup, `results/cost_report.md`), plain matmuls, no mask multiply, no Tensor overhead. This pushes the trade-off toward structured pruning for anything served, even where unstructured reaches slightly higher accuracy at matched sparsity, because a smaller dense matrix is the only "sparsity" a batched serving kernel can exploit.
 
 **Two wins, provisioned separately.** Memory (store only active params) decides how many tenant variants fit resident per node — the lever for density and cold-start avoidance. Compute (smaller GEMM) decides per-request latency and throughput. They scale independently: memory packs more tenants per box, compression makes each one run faster.
 

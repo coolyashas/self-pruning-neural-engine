@@ -92,7 +92,7 @@ def test_dense_matmul_speed_unaffected_by_sparsity():
     """
     n_in, n_out, batch = 256, 256, 64
 
-    def time_forward(sparsity: float, repeats: int = 200) -> float:
+    def time_forward(sparsity: float, repeats: int = 200, trials: int = 7) -> float:
         layer = Linear(n_in, n_out)
         if sparsity > 0:
             n_total = layer.weight.data.size
@@ -102,10 +102,19 @@ def test_dense_matmul_speed_unaffected_by_sparsity():
             np.random.shuffle(flat)
             set_mask(layer, flat.reshape(n_in, n_out))
         x = Tensor(np.random.randn(batch, n_in))
-        start = time.perf_counter()
-        for _ in range(repeats):
+
+        for _ in range(repeats):  # warm up: BLAS threadpool spin-up, caches
             layer(x)
-        return time.perf_counter() - start
+
+        # best-of-N: the minimum is the run least perturbed by scheduler jitter,
+        # the standard way to denoise a sub-millisecond microbenchmark.
+        best = float("inf")
+        for _ in range(trials):
+            start = time.perf_counter()
+            for _ in range(repeats):
+                layer(x)
+            best = min(best, time.perf_counter() - start)
+        return best
 
     t_dense = time_forward(0.0)
     t_sparse = time_forward(0.9)
@@ -134,10 +143,10 @@ def test_compressed_forward_is_actually_faster_at_high_structured_sparsity():
 
 def test_compressed_forward_speedup_isolated_from_autodiff_overhead():
     """Apples-to-apples: both arms are plain NumPy, so the ratio reflects ONLY
-    the FLOP reduction from a smaller matrix, excluding autodiff overhead.
-    Measured: ~0.36 here vs. ~0.26 with Tensor-dense -- about 28% of the naive
-    "~4x" was autodiff bookkeeping, not matrix size. Bound (0.5) targets the
-    FLOP-only effect.
+    the FLOP reduction from a smaller matrix, excluding autodiff overhead. The
+    exact ratio is machine/BLAS-dependent (canonical numbers in
+    results/cost_report.md); the bound (0.5) targets the durable FLOP-only
+    effect, not a specific multiple.
     """
     mlp = Sequential(Linear(2, 128), ReLU(), Linear(128, 128), ReLU(), Linear(128, 3))
     for layer in (mlp.layers[0], mlp.layers[2]):

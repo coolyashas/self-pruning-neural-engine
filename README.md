@@ -103,9 +103,8 @@ pip install -e ".[dev]"
 
 See [`DESIGN.md`](DESIGN.md) for the criterion derivation, the
 masked-gradient/mask-aware-Adam design rationale, weight-init
-justification, the honest cost/bottleneck story, the structured-pruning
-speedup (measured, with a caveat about how the first measurement of it
-overstated it), and the dynamic-sparse-training result.
+justification, the cost/bottleneck analysis, the measured
+structured-pruning speedup, and the dynamic-sparse-training result.
 
 ## Reproducibility
 

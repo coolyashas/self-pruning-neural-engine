@@ -1,0 +1,4 @@
+target_sparsity,achieved_sparsity,active_params,total_params,dense_flops,theoretical_sparse_flops,dense_numpy_sec,compressed_numpy_sec,speedup
+0.5,0.488722,8963,17283,2195648,1130688,0.069634,0.016904,4.119
+0.75,0.733083,4803,17283,2195648,598208,0.055502,0.010402,5.335
+0.9,0.878172,2333,17283,2195648,282048,0.050241,0.008536,5.886
