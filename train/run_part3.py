@@ -1,8 +1,6 @@
 """Part 3: self-pruning run -- train while gradually pruning to a target
 sparsity via the cubic schedule, using mask-aware Adam so pruned
-connections actually freeze. Default criterion is saliency (|w*g|), the
-main criterion per the project brief; magnitude is the baseline commit 24
-compares it against.
+connections actually freeze. 
 """
 
 from __future__ import annotations

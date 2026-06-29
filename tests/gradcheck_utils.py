@@ -27,13 +27,7 @@ def numerical_gradient(f: Callable[[np.ndarray], float], x: np.ndarray, h: float
 
 
 def assert_grad_matches(tensor_op, numpy_op, inputs: list[np.ndarray], atol: float = 1e-5) -> None:
-    """Check Tensor autodiff grad against finite differences, for every input.
-
-    `tensor_op(*Tensors) -> Tensor` and `numpy_op(*ndarrays) -> ndarray` must
-    compute the same function; one as our autodiff graph, one as plain NumPy
-    for the numerical reference. Output is summed first if not already
-    scalar, since backward() (no-arg form) requires a scalar root.
-    """
+    #Check Tensor autodiff grad against finite differences, for every input.
     tensors = [Tensor(x.copy(), requires_grad=True) for x in inputs]
     out = tensor_op(*tensors)
     loss = out if out.shape == () else out.sum()

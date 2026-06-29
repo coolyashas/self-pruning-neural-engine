@@ -13,10 +13,7 @@ set_seed(0)
 
 
 def test_top_k_keep_mask_rejects_nan_scores():
-    """argsort sorts NaN to the END (as largest), so a NaN score would be
-    silently KEPT. Every decision funnels through _top_k_keep_mask, so one
-    guard here protects all of them.
-    """
+    """argsort ranks NaN highest, so it would be silently kept; guard once at the funnel."""
     scores = np.array([1.0, np.nan, 3.0, 2.0])
     with pytest.raises(ValueError):
         _top_k_keep_mask(scores, n_keep=2)
@@ -35,10 +32,7 @@ def test_set_mask_rejects_a_shape_mismatched_mask():
 
 
 def test_nan_guard_and_set_mask_shape_guard_survive_python_dash_O():
-    """Both guards prevent a silent wrong answer (NaN ranked highest; a
-    shape-mismatched mask broadcasting into garbage) and are `if: raise`, not
-    `assert`. Spawn a real -O subprocess to confirm both still raise there.
-    """
+    """Both guards are `if: raise`, not `assert`, so they survive `python -O`; checked via subprocess."""
     import subprocess
     import sys
 
@@ -84,10 +78,7 @@ def test_set_mask_resyncs_bias_mask_from_column_alive():
 
 
 def test_set_mask_zeros_bias_of_a_neuron_killed_by_plain_unstructured_pruning():
-    """Plain per-weight pruning can zero an entire column, not just
-    prune_neurons_to_count. set_mask must zero that neuron's bias VALUE too,
-    not just freeze it -- otherwise it emits a constant ReLU(0 + stale_bias).
-    """
+    """When per-weight pruning kills a whole column, set_mask must zero the bias value too, not just freeze it."""
     layer = Linear(3, 4)
     layer.bias.data[1] = 2.5  # nonzero on purpose; default-zero would hide the bug
 
@@ -104,10 +95,7 @@ def test_set_mask_zeros_bias_of_a_neuron_killed_by_plain_unstructured_pruning():
 
 
 def test_w_eff_grad_is_the_unmasked_dense_gradient():
-    """w_eff = weight*mask is a graph node; mul()'s backward applies masking
-    only from w_eff.grad to weight.grad, so w_eff.grad is the dense signal even
-    where weight.grad is 0. This is what regrowth scoring reads.
-    """
+    """w_eff.grad stays the dense signal even where weight.grad is masked to 0; this is what regrowth reads."""
     layer = Linear(4, 3)
     keep = np.ones((4, 3))
     keep[1, 2] = 0.0
@@ -123,9 +111,7 @@ def test_w_eff_grad_is_the_unmasked_dense_gradient():
 
 
 def test_masked_weight_gradient_is_exactly_zero():
-    """dL/dweight at a masked entry must be exactly 0, falling out of mul()'s
-    backward (grad * mask), not patched in.
-    """
+    """dL/dweight at a masked entry must be exactly 0, straight out of mul() backward."""
     layer = Linear(4, 3)
     keep = np.ones((4, 3))
     keep[1, 2] = 0.0
@@ -144,9 +130,7 @@ def test_masked_weight_gradient_is_exactly_zero():
 
 
 def test_masked_weight_does_not_affect_forward_even_if_changed():
-    """Never destroy the underlying weight, only gate its contribution:
-    changing a masked-off weight's value must not change the output.
-    """
+    """Masking gates the weight, not destroys it: changing a masked-off value must not change the output."""
     layer = Linear(4, 3)
     keep = np.ones((4, 3))
     keep[1, 2] = 0.0
@@ -160,9 +144,7 @@ def test_masked_weight_does_not_affect_forward_even_if_changed():
 
 
 def test_gradcheck_with_partial_mask_matches_finite_difference():
-    """Finite-difference on the masked-off entries independently lands at ~0,
-    since perturbing a weight multiplied by mask=0 can't change the loss.
-    """
+    """Finite-difference lands at ~0 on masked entries, since a mask=0 weight can't change the loss."""
     keep = np.ones((4, 3))
     keep[0, 1] = 0.0
     keep[2, 0] = 0.0

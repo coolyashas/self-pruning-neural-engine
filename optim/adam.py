@@ -2,9 +2,7 @@
 
 Mask-aware: an optional `masks` list (parallel to `parameters`, None where
 not pruned) restricts the ENTIRE update -- weight AND the m/v EMAs -- to
-active entries. Zero gradient alone doesn't freeze a masked entry: `m =
-beta1*m + (1-beta1)*0` keeps decaying old m, which nudges the weight for
-several more steps. Restricting the m/v update itself is what freezes it.
+active entries.
 """
 
 from __future__ import annotations

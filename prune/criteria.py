@@ -46,13 +46,7 @@ def neuron_saliency_scores(layer: Linear) -> np.ndarray:
 def accumulate_gradients(model, X: np.ndarray, y: np.ndarray, batch_size: int) -> None:
     """Sweep (X, y) once in mini-batches, leaving every parameter's .grad
     equal to the TRUE full-dataset-mean gradient (a stable signal for
-    saliency scoring). Leaves .grad populated on exit -- callers must
-    zero_grad before any real training step.
-
-    Each backward() computes that batch's MEAN loss gradient, so when
-    batch_size doesn't divide n, contributions are weighted by n_batch/n:
-    sum_k (n_k/n) * batch_mean_grad_k = the true dataset-mean gradient.
-    Naive summing would overweight a smaller final batch's examples.
+    saliency scoring).
     """
     params = model.parameters()
     n = X.shape[0]
@@ -77,15 +71,6 @@ def accumulate_dense_gradients(model, X: np.ndarray, y: np.ndarray, batch_size: 
     """Sweep (X, y) once, accumulating each prunable Linear layer's w_eff.grad
     (the dense/unmasked gradient signal) into a persistent per-layer total
     equal to the TRUE full-dataset-mean gradient. Returns {layer: total}.
-
-    Parallel to accumulate_gradients. Unlike weight (a persistent Tensor whose
-    .grad sums itself across the sweep), w_eff is rebuilt fresh each forward
-    call, so its .grad must be read and summed here right after each batch's
-    backward(), before the next forward discards it.
-
-    Same n_batch/n per-batch weighting as accumulate_gradients, applied to
-    both the returned totals and the side-effect weight.grad (dst_step relies
-    on the latter matching a standalone accumulate_gradients call).
     """
     prunable = [layer for layer in model.layers if hasattr(layer, "mask")]
     params = model.parameters()

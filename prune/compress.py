@@ -3,10 +3,7 @@
 Unstructured masking (x @ (weight*mask)) never shrinks -- still a full-size
 matmul with zero entries. Structured (neuron-level) pruning lets the matrix's
 actual dimensions shrink once a whole output column is dead, so a normal
-dense matmul does genuinely less work. This module builds that smaller model.
-
-Inference-only: plain ndarrays, no Tensor/autodiff. A model never
-structurally pruned compresses to itself (no slicing happens).
+dense matmul does genuinely less work.
 """
 
 from __future__ import annotations
@@ -50,16 +47,6 @@ class CompressedSequential:
 def compress_model(model: Sequential) -> CompressedSequential:
     """Walk model.layers, slicing out only currently-alive neurons into real
     smaller dense weight/bias arrays.
-
-    Cross-layer coupling: a Linear's dead OUTPUT columns make the next
-    Linear's matching INPUT rows dead too (ReLU(0) == 0 passes deadness
-    through), so each Linear's input-side slicing follows the PREVIOUS
-    Linear's alive set. Relies on a dead neuron's pre-activation being exactly
-    0 (bias == 0 too), which prune.mask guarantees.
-
-    First Linear's inputs are never neurons, never sliced. Last Linear's
-    output is never sliced -- dropping an output class changes meaning, not
-    just size (a defensive guard; structured pruning shouldn't target it).
     """
     linear_layers = [layer for layer in model.layers if isinstance(layer, Linear)]
     assert linear_layers, "compress_model: model has no Linear layers to compress"

@@ -1,8 +1,4 @@
-"""Finite-difference gradient checks for every op built so far:
-add, sub, mul, div (plain + broadcasting), matmul, sum, mean.
-Also covers the two graph-correctness requirements from the pitfalls doc:
-shared-node gradient accumulation, and requires_grad=False being skipped.
-"""
+"""Finite-difference gradient checks for the core ops, plus shared-node accumulation and requires_grad=False skipping."""
 
 from pathlib import Path
 
@@ -28,31 +24,26 @@ set_seed(0)
 @pytest.mark.parametrize(
     "shape_a, shape_b",
     [
-        ((3, 4), (3, 4)),  # matching shapes, no broadcasting
-        ((3, 4), (4,)),  # bias-add style broadcast: (N,D)+(D,)
-        ((3, 4), (1, 4)),  # explicit size-1 broadcast axis: (N,D)+(1,D)
-        ((3, 4), (3, 1)),  # the OTHER size-1 axis: (N,D)+(N,1)
-        ((3, 4), ()),  # tensor + scalar
-        ((), (3, 4)),  # scalar + tensor (the other operand order)
-        ((1, 1), (3, 4)),  # fully-degenerate singleton broadcast both axes
-        ((2, 3, 4), (4,)),  # higher-rank: (N,M,D)+(D,), two leading axes added
-        ((2, 3, 4), (3, 4)),  # higher-rank: leading axis added, no singleton involved
-        ((2, 1, 4), (4,)),  # higher-rank with an explicit singleton axis: (N,1,D)+(D,)
+        ((3, 4), (3, 4)),
+        ((3, 4), (4,)),
+        ((3, 4), (1, 4)),
+        ((3, 4), (3, 1)),
+        ((3, 4), ()),
+        ((), (3, 4)),
+        ((1, 1), (3, 4)),
+        ((2, 3, 4), (4,)),
+        ((2, 3, 4), (3, 4)),
+        ((2, 1, 4), (4,)),
     ],
 )
 def test_elementwise_grad(op_name, tensor_op, numpy_op, shape_a, shape_b):
-    # np.asarray AFTER the arithmetic: the scalar case returns a Python float,
-    # and NumPy 2.x (NEP 50) collapses 0-d + float back to a bare scalar.
-    # gradcheck_utils needs a real ndarray, so wrap after the +2.0 offset.
     a = np.asarray(np.random.randn(*shape_a))
-    b = np.asarray(np.random.randn(*shape_b) + (2.0 if op_name == "div" else 0.0))  # avoid /0
+    b = np.asarray(np.random.randn(*shape_b) + (2.0 if op_name == "div" else 0.0))
     assert_grad_matches(tensor_op, numpy_op, [a, b])
 
 
 def test_broadcast_then_reduce():
-    """Broadcast op feeding a reduction: (N,D)+(D,) reduced over axis=0
-    exercises _unbroadcast and _grad_to_input_shape back to back.
-    """
+    """Broadcast feeding a reduction: exercises _unbroadcast then _grad_to_input_shape."""
     a = np.random.randn(5, 3)
     b = np.random.randn(3)
     assert_grad_matches(
@@ -63,9 +54,7 @@ def test_broadcast_then_reduce():
 
 
 def test_broadcast_then_matmul():
-    """Broadcast add feeding matmul: chains _unbroadcast's backward with
-    matmul's dA = dY@B.T / dB = A.T@dY in one graph.
-    """
+    """Broadcast add feeding matmul: chains _unbroadcast with matmul backward."""
     x = np.random.randn(5, 3)
     bias = np.random.randn(3)
     w = np.random.randn(3, 2)
@@ -77,10 +66,7 @@ def test_broadcast_then_matmul():
 
 
 def test_composite_broadcast_chain_three_different_shapes():
-    """Three shapes broadcasting in turn ((N,D) * (D,) then + (N,1)): each
-    op's _unbroadcast must reduce back to ITS OWN inputs' shapes despite the
-    intermediate result already having grown.
-    """
+    """Three shapes broadcasting in turn: each _unbroadcast must reduce to its own input shape."""
     a = np.random.randn(4, 3)
     b = np.random.randn(3)
     c = np.random.randn(4, 1)
@@ -100,20 +86,16 @@ def test_matmul_grad():
 @pytest.mark.parametrize(
     "shape_a, shape_b",
     [
-        ((6, 5, 3), (6, 3, 4)),  # true batched: matching batch dims
-        ((6, 5, 3), (3, 4)),  # batch broadcast: b has no batch dim at all
-        ((5, 3), (6, 3, 4)),  # batch broadcast: a has no batch dim at all
-        ((6, 5, 3), (1, 3, 4)),  # batch broadcast: explicit singleton batch dim
-        ((1, 5, 3), (6, 3, 4)),  # singleton batch dim on the OTHER operand
-        ((2, 6, 5, 3), (6, 3, 4)),  # higher rank (4D vs 3D) batch broadcast
+        ((6, 5, 3), (6, 3, 4)),
+        ((6, 5, 3), (3, 4)),
+        ((5, 3), (6, 3, 4)),
+        ((6, 5, 3), (1, 3, 4)),
+        ((1, 5, 3), (6, 3, 4)),
+        ((2, 6, 5, 3), (6, 3, 4)),
     ],
 )
 def test_matmul_batched_grad(shape_a, shape_b):
-    """Batched matmul with NumPy-style batch broadcasting before the last two
-    axes. Covers true batching, one-sided broadcast both ways, singleton batch
-    dims, and 4D-vs-3D: _unbroadcast_batch must reduce each gradient to ITS
-    OWN batch shape without touching the matrix axes.
-    """
+    """Batched matmul: _unbroadcast_batch reduces each grad to its own batch shape, leaving matrix axes alone."""
     a = np.random.randn(*shape_a)
     b = np.random.randn(*shape_b)
     assert_grad_matches(lambda at, bt: at @ bt, lambda aa, ba: aa @ ba, [a, b])
@@ -122,16 +104,13 @@ def test_matmul_batched_grad(shape_a, shape_b):
 @pytest.mark.parametrize(
     "shape_a, shape_b",
     [
-        ((3,), (3, 4)),  # vector-matrix, explicitly out of scope
-        ((3, 4), (4,)),  # matrix-vector, explicitly out of scope
-        ((), (3, 4)),  # scalar operand
+        ((3,), (3, 4)),
+        ((3, 4), (4,)),
+        ((), (3, 4)),
     ],
 )
 def test_matmul_rejects_1d_or_0d_inputs(shape_a, shape_b):
-    """ndim<2 on either side (vector-matrix/matrix-vector) is out of scope and
-    must be rejected with a clear error, not silently computed (NumPy's @
-    supports these) or crashed inside backward().
-    """
+    """ndim<2 on either side is out of scope and must raise, not silently compute."""
     a = Tensor(np.random.randn(*shape_a))
     b = Tensor(np.random.randn(*shape_b))
     with pytest.raises(ValueError, match="ndim"):
@@ -139,10 +118,7 @@ def test_matmul_rejects_1d_or_0d_inputs(shape_a, shape_b):
 
 
 def test_matmul_ndim_guard_survives_python_dash_O():
-    """`assert` is stripped under `python -O`, so the ndim<2 guard is
-    `if: raise`. Verify it still fires under -O via a subprocess (an
-    in-process pytest.raises can't tell, since pytest never runs under -O).
-    """
+    """The ndim<2 guard is `if: raise`, not `assert`, so it survives `python -O`; checked via subprocess."""
     import subprocess
     import sys
 
@@ -171,10 +147,7 @@ def test_backward_no_arg_rejects_non_scalar_output():
 
 
 def test_backward_no_arg_scalar_guard_survives_python_dash_O():
-    """Same -O concern as matmul's guard: under -O, backward() on a non-scalar
-    would silently seed every grad as 1.0 instead of raising. Verify the
-    `if: raise` guard still fires under -O via a subprocess.
-    """
+    """The non-scalar backward() guard is `if: raise`, so it survives `python -O`; checked via subprocess."""
     import subprocess
     import sys
 
@@ -203,7 +176,7 @@ def test_backward_no_arg_scalar_guard_survives_python_dash_O():
         (0, True),
         (1, False),
         (1, True),
-        ((0, 1), False),  # multi-axis reduction, collapses to a scalar on a 2D input
+        ((0, 1), False),
         ((0, 1), True),
     ],
 )
@@ -241,16 +214,13 @@ def test_mean_grad(axis, keepdims):
 @pytest.mark.parametrize(
     "axis, keepdims",
     [
-        ((0, 2), False),  # non-adjacent axes on a 3D input
+        ((0, 2), False),
         ((1, 2), True),
-        (None, False),  # reduce every axis of a 3D input at once
+        (None, False),
     ],
 )
 def test_sum_grad_three_dimensional(axis, keepdims):
-    """Multi-axis reduction on a 3D input: a non-adjacent axis pair (0,2)
-    forces _normalize_axis/_grad_to_input_shape to correctly skip axis 1,
-    which the 2D tests can't distinguish.
-    """
+    """3D multi-axis reduction over a non-adjacent pair (0,2) forces correctly skipping axis 1."""
     A = np.random.randn(2, 3, 4)
     assert_grad_matches(
         lambda t: t.sum(axis=axis, keepdims=keepdims),
@@ -260,8 +230,6 @@ def test_sum_grad_three_dimensional(axis, keepdims):
 
 
 def test_shared_node_accumulation():
-    # straight from the pitfalls doc: a = x*y; b = a+a; loss = b.sum()
-    # x and y's gradient must accumulate contributions from both branches.
     x = np.random.randn(4)
     y = np.random.randn(4)
 
@@ -286,11 +254,9 @@ def test_requires_grad_false_is_skipped():
 
 
 def test_requires_grad_false_is_skipped_in_batched_matmul():
-    """test_requires_grad_false_is_skipped through the batched matmul path:
-    the requires_grad gate and _unbroadcast_batch are independent logic.
-    """
+    """requires_grad=False skipping through the batched matmul path."""
     data = Tensor(np.random.randn(6, 5, 3), requires_grad=False)
-    w = Tensor(np.random.randn(3, 2), requires_grad=True)  # no batch dim: broadcasts
+    w = Tensor(np.random.randn(3, 2), requires_grad=True)
     out = (data @ w).sum()
     out.backward()
     assert data.grad is None

@@ -12,15 +12,8 @@ from nn.linear import Linear
 
 
 def set_mask(layer: Linear, keep: np.ndarray) -> None:
-    """keep: boolean (or 0/1) array matching layer.weight's shape; True/1 = active.
+    #keep: boolean (or 0/1) array matching layer.weight's shape; True/1 = active.
 
-    The single place layer.mask is written, so it also keeps bias state
-    consistent: resyncs layer.bias_mask (a column with any active entry keeps
-    its neuron's bias active) and zeros bias for any neuron that just went
-    fully dead. Freezing bias_mask alone would leave a dead neuron emitting
-    ReLU(0 + stale_bias) -- a nonzero output that breaks compress_model and
-    sparsity accounting, both of which assume a dead neuron contributes zero.
-    """
     # `if: raise` not `assert`, so a shape mismatch can't slip through `-O`.
     if keep.shape != layer.weight.shape:
         raise ValueError(f"keep.shape {keep.shape} != layer.weight.shape {layer.weight.shape}")
@@ -38,13 +31,8 @@ def _top_k_keep_mask(scores: np.ndarray, n_keep: int) -> np.ndarray:
     """Boolean mask, same shape as `scores`, keeping exactly the n_keep
     highest-scoring entries. Top-k via argsort, not a threshold cutoff, which
     can over/undershoot the target count on ties.
-
-    The single funnel for every caller's ranking, so it guards against NaN
-    scores: NumPy sorts NaN to the END (as the largest value), which would
-    silently KEEP a NaN-scored entry regardless of its true importance.
     """
-    # `if: raise` not `assert` -- this guard must survive `-O`, since it
-    # exists to prevent a silent wrong answer (NaN ranked highest).
+    
     if np.isnan(scores).any():
         raise ValueError("NaN score would be silently treated as highest-ranked by argsort")
     flat_keep = np.zeros(scores.size, dtype=bool)
@@ -66,9 +54,7 @@ def keep_mask_from_scores(scores: np.ndarray, sparsity: float) -> np.ndarray:
 def prune_to_sparsity(layer: Linear, scores: np.ndarray, target_sparsity: float) -> None:
     """Prune `layer` toward `target_sparsity`, monotonically: only removes,
     never revives. Already-pruned entries score -inf so top-k can't reselect
-    them. No-op if current sparsity already meets the target (rounding can
-    overshoot the continuous cubic schedule ahead of time).
-    """
+    them."""
     current_mask = layer.mask.data
     n_total = current_mask.size
     n_active = int(current_mask.sum())
@@ -92,12 +78,7 @@ def keep_neurons_from_scores(scores: np.ndarray, n_prune: int) -> np.ndarray:
 def prune_neurons_to_count(layer: Linear, scores: np.ndarray, target_active: int) -> None:
     """Prune layer's OUTPUT neurons (whole mask columns) down to target_active
     active neurons, monotonically -- prune_to_sparsity's -inf never-revives
-    trick applied column-wise. "Active" means the column has any nonzero
-    entry, so a partly-pruned neuron still counts until zeroed here.
-
-    Newly-dead neurons' bias handling lives in set_mask. Deliberately not
-    built on prune_to_sparsity, whose -inf trick is per-entry, not per-column,
-    and would let a half-dead column escape full zeroing.
+    trick applied column-wise.
     """
     n_out = layer.weight.shape[1]
     column_alive = layer.mask.data.any(axis=0)
@@ -119,11 +100,6 @@ def revive_to_count(layer: Linear, scores: np.ndarray, n_revive: int) -> np.ndar
     """Activate the n_revive highest-scoring CURRENTLY-MASKED entries -- the
     grow half of DST. prune_to_sparsity's -inf trick inverted: already-active
     entries score -inf so top-k only selects among masked-off ones.
-
-    Returns the boolean array (layer.mask shape) of just-revived entries, so
-    callers can reset_state on exactly these (no stale pre-pruning momentum)
-    and exclude them from the same cycle's drop step. Does NOT touch the
-    optimizer. Clamps n_revive to the number of masked-off entries.
     """
     current_mask = layer.mask.data
     n_inactive = int((current_mask == 0).sum())

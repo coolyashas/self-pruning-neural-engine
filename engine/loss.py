@@ -24,8 +24,6 @@ def softmax_cross_entropy(logits: Tensor, labels: np.ndarray) -> Tensor:
     # a NumPy fancy-indexing path that would otherwise give a silently wrong
     # loss/gradient rather than an error.
 
-    # Integer dtype: a float label array would hit the indexing below with a
-    # raw, leaky NumPy IndexError.
     if not np.issubdtype(labels.dtype, np.integer):
         raise ValueError(f"labels must be an integer array, got dtype={labels.dtype}")
 

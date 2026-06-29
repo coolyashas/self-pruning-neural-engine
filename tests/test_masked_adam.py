@@ -1,7 +1,4 @@
-"""Proves mask-aware Adam is correct: a masked weight's gradient is exactly 0,
-its m/v moments are frozen (not just decaying) while masked, and a revived
-weight starts from a clean moment state rather than stale momentum.
-"""
+"""Mask-aware Adam: masked weights stay frozen with frozen m/v, and revival starts from a clean moment state."""
 
 import numpy as np
 import pytest
@@ -29,9 +26,7 @@ def test_masked_weight_stays_exactly_zero_across_many_steps():
 
 
 def test_masked_weight_frozen_at_arbitrary_nonzero_value():
-    """Masking must freeze the value, not force it to 0. A nonzero start rules
-    out an implementation that secretly zeroes masked weights.
-    """
+    """Masking freezes the value, not zeroes it; a nonzero start proves it."""
     p = Tensor(np.array([7.5]), requires_grad=True)
     mask = Tensor(np.array([0.0]), requires_grad=False)
     opt = Adam([p], lr=0.5, masks=[mask])
@@ -42,9 +37,7 @@ def test_masked_weight_frozen_at_arbitrary_nonzero_value():
 
 
 def test_masked_moments_do_not_drift():
-    """m and v must stay bitwise unchanged while masked, not decay toward
-    zero via the EMA recursion.
-    """
+    """m and v stay bitwise unchanged while masked, not decaying via the EMA recursion."""
     p = Tensor(np.array([1.0, 2.0]), requires_grad=True)
     mask = Tensor(np.array([1.0, 1.0]), requires_grad=False)
     opt = Adam([p], lr=0.1, masks=[mask])
@@ -98,9 +91,7 @@ def test_revived_weight_starts_from_clean_moment_state():
 
 
 def test_without_reset_state_revival_inherits_stale_momentum():
-    """Skipping reset_state on revival lets old momentum leak into the first
-    post-revival step, producing a different update than the clean-state case.
-    """
+    """Skipping reset_state leaks stale momentum into the first post-revival step."""
 
     def run(reset: bool):
         p = Tensor(np.array([1.0, 2.0]), requires_grad=True)
@@ -125,11 +116,7 @@ def test_without_reset_state_revival_inherits_stale_momentum():
 
 
 def test_structurally_dead_neurons_bias_stays_exactly_zero_under_continued_training():
-    """Regression: a structurally-pruned neuron's bias kept drifting via stale
-    Adam momentum after its weight was frozen, so the dense forward emitted
-    ReLU(0 + bias) instead of 0 (which compress_model assumes). bias_mask
-    closes this the same way mask-aware Adam closes it for weight.
-    """
+    """Regression: a pruned neuron's bias drifted via stale momentum; bias_mask freezes it like mask-aware Adam does for weight."""
     from prune.criteria import neuron_magnitude_scores
     from prune.mask import prune_neurons_to_count
 
@@ -159,9 +146,7 @@ def test_structurally_dead_neurons_bias_stays_exactly_zero_under_continued_train
 
 
 def test_masked_adam_end_to_end_with_real_backward():
-    """Masking + mask-aware Adam through a real Linear layer and real
-    backward(), not hand-set grads.
-    """
+    """Masking + mask-aware Adam through a real Linear layer and real backward()."""
     layer = Linear(4, 3)
     keep = np.ones((4, 3))
     keep[1, 2] = 0.0
@@ -182,13 +167,7 @@ def test_masked_adam_end_to_end_with_real_backward():
 
 
 def test_revival_first_update_is_oversized_not_conservative_at_realistic_t():
-    """At a stale large `t`, m_hat (beta1=0.9) is fully bias-corrected but
-    v_hat (beta2=0.999) is still under-corrected (too small); since v_hat sits
-    under a sqrt in the denominator, the first post-revival update is LARGER,
-    not smaller -- ~2-3x oversized at the t values real runs reach. Correctness
-    still holds (m/v are exactly 0 after reset); this is a bounded property of
-    the shared `t`, and the direction matters for stability reasoning.
-    """
+    """At a stale large `t`, under-corrected v_hat makes the first post-revival update ~2-3x larger, not smaller; a bounded property of the shared `t`."""
     beta1, beta2, eps, lr, g = 0.9, 0.999, 1e-8, 0.01, 1.0
 
     def first_update_ratio(t):

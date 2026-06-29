@@ -34,14 +34,7 @@ def train(
     on_step_end=None,
     grad_clip: float | None = None,
 ) -> list[float]:
-    """on_epoch_end(epoch, losses_so_far) runs after each epoch.
-    on_step_end(global_step, model, loss) runs after every mini-batch step
-    -- e.g. to apply a pruning schedule at step granularity, finer than
-    once per epoch. Both default to None and are backward compatible.
 
-    grad_clip: if set, clip the global gradient norm to this value before
-    each optimizer step (see _clip_grad_norm). None disables clipping.
-    """
     n = X.shape[0]
     losses = []
     step = 0

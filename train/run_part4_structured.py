@@ -2,9 +2,6 @@
 Part 3, but pruning whole output neurons. Coarser, but the payoff is a real
 compressed model (prune/compress.py) that's actually faster, not just
 smaller-on-paper.
-
-The final Linear's output is never a target: dropping an output class changes
-the model's meaning, not just its size.
 """
 
 from __future__ import annotations

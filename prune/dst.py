@@ -1,7 +1,5 @@
 """Dynamic sparse training: grow+drop exchange cycles that reallocate a
-layer's fixed active-connection budget instead of only shrinking it. The
-prune_* primitives are monotonic by design; this is a higher-level policy
-composing revive_to_count with a drop step.
+layer's fixed active-connection budget instead of only shrinking it. 
 """
 
 from __future__ import annotations
@@ -26,22 +24,6 @@ def run_exchange_cycle(
     w_eff.grad regrowth signal), then drop exactly as many ORIGINALLY-active
     entries by drop_scores as were actually revived (revive_to_count can clamp
     below n_exchange).
-
-    The drop step needs THREE-way scoring: revived entries forced to +inf
-    (kept this cycle, to prove themselves), still-inactive entries forced to
-    -inf (never reactivated here), and only originally-active entries scored
-    by drop_scores. Lumping revived and still-inactive together would let
-    top-k keep still-inactive entries instead of real candidates.
-
-    Calls optimizer.reset_state(layer.weight, revived) so revived entries
-    don't inherit stale pre-pruning momentum (the optimizer must be the one
-    built from this model's masked_parameters()). Also resets bias state for
-    any neuron whose bias_mask flips 0->1 here: set_mask un-freezes that bias,
-    and without a reset Adam would apply momentum from before the neuron died.
-
-    Guarded no-op at n_active_before == 0: the drop target is n_active_before,
-    so at 0 even a +inf-forced entry gets dropped -- a fully-dead layer would
-    revive then immediately re-drop. Nothing to exchange anyway.
     """
     n_active_before = int(layer.mask.data.sum())
     if n_active_before == 0:
@@ -76,20 +58,7 @@ def dst_step(
     drop_score_fn,
     exchange_fraction: float = 0.1,
 ) -> None:
-    """One scheduled DST maintenance step (called from on_step_end). Two phases:
 
-    1. Ramp (step < prune_end_step): accumulate_gradients + prune_to_sparsity
-       toward the cubic target, monotonic, no regrowth yet -- nothing to
-       exchange while sparsity is still climbing.
-    2. Maintenance (step >= prune_end_step): grow+drop exchange cycles per
-       layer, sized exchange_fraction * n_active (>= 1), growing by
-       w_eff.grad and dropping by drop_score_fn. Net active count stays
-       constant.
-
-    Maintenance needs only ONE sweep: accumulate_dense_gradients's backward()
-    populates weight.grad (which drop_score_fn reads for saliency) as a side
-    effect of producing w_eff.grad, so a second sweep would redo identical work.
-    """
     prunable = [layer for layer in model.layers if hasattr(layer, "mask")]
 
     if step < prune_end_step:

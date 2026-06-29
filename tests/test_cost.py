@@ -118,8 +118,7 @@ def test_dense_matmul_speed_unaffected_by_sparsity():
 def test_compressed_forward_is_actually_faster_at_high_structured_sparsity():
     """Unlike unstructured sparsity (no speedup), structured pruning yields
     genuinely smaller sliced matrices, so a dense matmul on them does less
-    work. t_dense here also carries autodiff per-call overhead unrelated to
-    compression (see the isolated test below), so the bound is loosened.
+    work.
     """
     mlp = Sequential(Linear(2, 128), ReLU(), Linear(128, 128), ReLU(), Linear(128, 3))
     for layer in (mlp.layers[0], mlp.layers[2]):

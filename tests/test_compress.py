@@ -73,8 +73,7 @@ def test_compress_last_layer_output_never_sliced_even_if_masked():
 def test_compress_matches_dense_forward_with_nonzero_bias():
     """Regression: a pruned neuron with NONZERO bias emits ReLU(0 + bias), not
     0. compress_model assumes a pruned neuron contributes nothing, which holds
-    only because prune_neurons_to_count zeros its bias. Uses a nonzero bias,
-    which fresh layers (bias 0.0) accidentally hid.
+    only because prune_neurons_to_count zeros its bias.
     """
     mlp = _make_mlp()
     for layer in mlp.layers:

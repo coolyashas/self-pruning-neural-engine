@@ -1,11 +1,7 @@
 """Structured vs. unstructured pruning at matched connection-count sparsity:
 does pruning whole neurons cost more accuracy than pruning individual weights?
 Structured is coarser (all-or-nothing per neuron), so it should cost more;
-this measures whether it actually does. Orchestrates many run_part3 and
-run_part4_structured calls and aggregates them.
-
-Sparsities stay below the unstructured sweep's 0.9-0.95 ceiling: pruning 90%+
-of a 128-wide layer leaves ~13 neurons and likely collapses accuracy on its own.
+this measures whether it actually does.
 """
 
 from __future__ import annotations

@@ -2,10 +2,6 @@
 final sparsity: does reallocating the active-connection budget (grow+drop
 cycles, prune/dst.py) help accuracy? Orchestrates many run_part3 calls (with
 vs without enable_regrowth) and aggregates them.
-
-DST usually helps most at high sparsity (90%+), but results/CLAIM.md shows
-saliency pruning alone already holds accuracy flat through 95% here, so the
-benefit may be small. Report the measured numbers either way.
 """
 
 from __future__ import annotations
