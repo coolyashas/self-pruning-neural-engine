@@ -25,7 +25,24 @@ def test_neuron_saliency_scores_shape_and_formula():
 
     scores = neuron_saliency_scores(layer)
     assert scores.shape == (20,)
-    assert np.allclose(scores, np.abs(layer.weight.data * layer.weight.grad).sum(axis=0))
+    assert np.allclose(scores, np.abs((layer.weight.data * layer.weight.grad).sum(axis=0)))
+
+
+def test_neuron_saliency_sums_signed_then_abs_not_abs_then_sum():
+    """The Taylor estimate of removing a neuron is |sum_i w_i*g_i| (the
+    column's signed saliencies cancel), NOT sum_i |w_i*g_i|. A column whose
+    per-connection contributions cancel must score near zero, not high.
+    """
+    layer = Linear(2, 2)
+    # column 0: contributions +6 and -6 -> signed sum 0, abs-then-sum 12.
+    # column 1: contributions +1 and +1 -> signed sum 2, abs-then-sum 2.
+    layer.weight.data = np.array([[3.0, 1.0], [-3.0, 1.0]])
+    layer.weight.grad = np.array([[2.0, 1.0], [2.0, 1.0]])
+
+    sal = neuron_saliency_scores(layer)
+    assert np.allclose(sal, [0.0, 2.0])
+    # the cancelling column is LEAST important, the opposite of abs-then-sum
+    assert np.argmin(sal) == 0
 
 
 def test_neuron_saliency_requires_a_gradient():

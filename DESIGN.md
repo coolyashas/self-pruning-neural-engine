@@ -41,6 +41,23 @@ Two practical consequences that show up directly in the code:
   real Pareto sweep shows this divergence matters in practice, not just
   in a contrived test (see `results/CLAIM.md`).
 
+**Structured (neuron-level) saliency: sum the signed terms, then abs.**
+Removing an output *neuron* means zeroing its whole incoming column at
+once, not one connection at a time. The same first-order Taylor argument
+applied to the group gives `ΔL ≈ -Σ_i w_i·g_i` over the column, so the
+loss increase is `|Σ_i w_i·g_i|` — sum the *signed* per-connection
+saliencies, then take the absolute value
+(`prune/criteria.py:neuron_saliency_scores`). This is deliberately *not*
+`Σ_i |w_i·g_i|` (abs-then-sum): by the triangle inequality that L1 norm
+upper-bounds the real estimate and equals it only when every connection
+in the column shares a sign. The two diverge exactly when a column's
+contributions cancel — and that cancellation is real to first order: a
+neuron whose incoming saliencies sum to zero has near-zero net effect on
+the loss when removed, so it *should* score low, which abs-then-sum would
+wrongly rank high (`test_neuron_saliency_sums_signed_then_abs_not_abs_then_sum`).
+Squaring instead of taking the absolute value (`(Σ w_i·g_i)²`, Molchanov
+et al. 2019) gives an identical ranking.
+
 ## 2. Masked gradient and mask-aware Adam
 
 **The forward design.** Pruning is implemented as `w_eff = weight * mask`,

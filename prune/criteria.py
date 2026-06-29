@@ -41,13 +41,15 @@ def neuron_magnitude_scores(layer: Linear) -> np.ndarray:
 
 
 def neuron_saliency_scores(layer: Linear) -> np.ndarray:
-    """Structured analogue of saliency_scores: one score per output
-    neuron, summing |w*g| over its incoming column. Same accumulated-
-    gradient contract as saliency_scores -- needs weight.grad populated
-    via accumulate_gradients first.
+    """First-order loss increase from removing a whole output neuron
+    (zeroing its incoming column at once): |sum_i w_i*g_i|. Sum the SIGNED
+    saliencies over the column, THEN abs -- not abs-then-sum, which is the
+    L1 norm and only an upper bound (signed terms can cancel, and that
+    cancellation is real). Same accumulated-gradient contract as
+    saliency_scores. See DESIGN.md section 1.
     """
     assert layer.weight.grad is not None, "need accumulated gradients before scoring saliency"
-    return np.abs(layer.weight.data * layer.weight.grad).sum(axis=0)
+    return np.abs((layer.weight.data * layer.weight.grad).sum(axis=0))
 
 
 def accumulate_gradients(model, X: np.ndarray, y: np.ndarray, batch_size: int) -> None:
