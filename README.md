@@ -70,8 +70,8 @@ pip install -e ".[dev]"
   python -m train.run_part3
   ```
 
-- **Pareto sweep** (magnitude vs. saliency, 5 seeds each, across sparsity
-  levels 0–95%; ~2-3 minutes; writes `results/pareto_{raw,summary}.csv`
+- **Part 4 — Pareto sweep** (magnitude vs. saliency, 5 seeds each, across
+  sparsity levels 0–95%; ~2-3 minutes; writes `results/pareto_{raw,summary}.csv`
   and `results/pareto_sweep.png`):
   ```bash
   python -m train.run_pareto_sweep
@@ -80,7 +80,7 @@ pip install -e ".[dev]"
   this sweep's actual output supports, and how to falsify it by re-running
   the command above.
 
-- **Part 4 — structured (neuron-level) self-pruning** (closes the "real
+- **Extension — structured (neuron-level) self-pruning** (closes the "real
   cost measurement" gap: compresses to a genuinely smaller dense model,
   not just a masked one — see `DESIGN.md` §5 for the measured speedup):
   ```bash
