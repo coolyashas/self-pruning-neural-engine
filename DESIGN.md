@@ -94,7 +94,7 @@ There are two distinct benefits, with different requirements:
 
 The speedup is real, but the first measurement overstated it (caught in review). Comparing `model(Tensor(x))` against `compressed(x)` conflates genuine FLOP reduction with the autodiff bookkeeping that only the Tensor path pays. Decomposed, about 28% of the original ~4x ratio was autodiff overhead, not matrix size. The apples-to-apples number — plain NumPy at full size vs. plain NumPy at compressed size, `evaluation/cost.py:time_dense_numpy_vs_compressed_forward` — is **2.8x** at 75% structured sparsity on the 128-wide hidden layers. This is the same discipline this section holds unstructured masking to, applied a level deeper: a benchmark whose two paths differ in more than one way can overstate a real effect as easily as dense×mask can fake one.
 
-Accuracy cost: a comparison sweep (`train/run_structured_vs_unstructured.py`, 3 sparsities × 3 seeds) found structured and unstructured saliency pruning statistically indistinguishable on this task (~99.7% both, std≈0.001) up to 85% sparsity. The expected "structured is coarser, so it costs more accuracy at matched sparsity" penalty did not appear, consistent with this task's overparameterization (`results/CLAIM.md`).
+Accuracy cost: a comparison sweep (`train/run_structured_vs_unstructured.py`, 3 sparsities × 5 seeds) found structured and unstructured saliency pruning statistically indistinguishable on this task (~99.7% both, std < 0.001) up to 85% sparsity. The expected "structured is coarser, so it costs more accuracy at matched sparsity" penalty did not appear, consistent with this task's overparameterization (`results/CLAIM.md`).
 
 ## 4. Serving a self-pruned model in a multi-tenant service at scale
 
@@ -128,8 +128,8 @@ Result: regrowth substantially hurt accuracy and stability on this task, the opp
 
 | sparsity | without regrowth | with regrowth (DST) |
 |---|---|---|
-| 90% | 99.67% ± 0.07% | 94.89% ± 4.68% |
-| 95% | 99.53% ± 0.19% | 91.02% ± 11.59% (worst seed: 68.3%) |
+| 90% | 99.71% ± 0.05% | 95.78% ± 6.45% (worst seed: 82.9%) |
+| 95% | 99.40% ± 0.11% | 97.38% ± 1.33% |
 
 Plausible explanation, not independently verified: plain saliency pruning already converges to a near-optimal fixed mask quickly on this small, overparameterized task (§3, `results/CLAIM.md`), so continuously disturbing that mask via exchange cycles adds churn the small amount of training between cycles can't recover from — the opposite of DST's usual regime (a large/hard task where the early fixed mask is itself suboptimal). Reported as measured.
 
